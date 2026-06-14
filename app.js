@@ -1993,7 +1993,7 @@ async function initRouteSelector() {
 
     const audio = document.getElementById('audio-track');
     if (audio) {
-        audio.src = `${activeRoute}/qcamera.mp3`;
+        audio.src = `${activeRoute}/qcamera.m4a`;
     }
 
     updateVideoSourceLabel(activeRoute);
@@ -2074,7 +2074,7 @@ function loadRoute(routeName) {
 
     const audio = document.getElementById('audio-track');
     if (audio) {
-        audio.src = `${routeName}/qcamera.mp3`;
+        audio.src = `${routeName}/qcamera.m4a`;
         audio.load();
     }
 

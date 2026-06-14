@@ -171,13 +171,13 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
 
         filepath = self.translate_path(parsed_url.path)
         
-        # Intercept qcamera.mp3 requests
-        if filepath.endswith('qcamera.mp3') and not os.path.exists(filepath):
-            ts_path = filepath.rsplit('qcamera.mp3', 1)[0] + 'qcamera.ts'
+        # Intercept qcamera.m4a requests
+        if filepath.endswith('qcamera.m4a') and not os.path.exists(filepath):
+            ts_path = filepath.rsplit('qcamera.m4a', 1)[0] + 'qcamera.ts'
             if os.path.exists(ts_path):
                 data = self.get_cached_or_extract_audio(ts_path, filepath)
                 if data:
-                    self.serve_bytes(data, content_type='audio/mpeg')
+                    self.serve_bytes(data, content_type='audio/mp4')
                     return
                 else:
                     self.send_error(404, "Audio track not present or extraction failed")
@@ -238,20 +238,20 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
                 print(f"[Memory Transmux] Exception: {e}")
                 return None
 
-    def get_cached_or_extract_audio(self, ts_path, mp3_path):
+    def get_cached_or_extract_audio(self, ts_path, m4a_path):
         # Check cache first
         with cache_lock:
-            if mp3_path in mp4_cache:
-                print(f"[Memory Cache] Audio Hit for: {mp3_path}")
-                return mp4_cache[mp3_path]
+            if m4a_path in mp4_cache:
+                print(f"[Memory Cache] Audio Hit for: {m4a_path}")
+                return mp4_cache[m4a_path]
                 
         # Lock specific file to prevent duplicate concurrent runs
-        lock = get_transmux_lock(mp3_path)
+        lock = get_transmux_lock(m4a_path)
         with lock:
             # Double check cache inside lock
             with cache_lock:
-                if mp3_path in mp4_cache:
-                    return mp4_cache[mp3_path]
+                if m4a_path in mp4_cache:
+                    return mp4_cache[m4a_path]
                     
             print(f"[Audio Extract] Extracting audio from {ts_path} to memory...")
             # Determine start PTS offset between video and audio
@@ -308,15 +308,18 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
                 if delay_ms > 0:
                     cmd.extend(["-af", f"adelay={delay_ms}:all=1"])
                 cmd.extend([
-                    "-c:a", "libmp3lame",
-                    "-f", "mp3",
+                    "-c:a", "aac"
+                ])
+                cmd.extend([
+                    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+                    "-f", "mp4",
                     "pipe:1"
                 ])
                 res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 if res.returncode == 0 and len(res.stdout) > 0:
                     data = res.stdout
                     print(f"[Audio Extract] Completed (In-Memory Pipe): {ts_path} ({len(data)} bytes)")
-                    cache_mp4_data(mp3_path, data)
+                    cache_mp4_data(m4a_path, data)
                     return data
                 else:
                     print(f"[Audio Extract] Error: ffmpeg failed with code {res.returncode}")
