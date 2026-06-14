@@ -38,9 +38,18 @@ def find_binary(name):
     except Exception:
         pass
         
-    # 3. Check common binary paths directly
-    for p in [f"/usr/bin/{name}", f"/usr/local/bin/{name}"]:
-        if os.path.exists(p):
+    # 3. Check current python virtual environment's bin directory
+    try:
+        py_bin_dir = os.path.dirname(sys.executable)
+        py_bin_path = os.path.join(py_bin_dir, name)
+        if os.path.exists(py_bin_path) and os.access(py_bin_path, os.X_OK):
+            return py_bin_path
+    except Exception:
+        pass
+        
+    # 4. Check common binary paths directly (including comma venv path)
+    for p in [f"/usr/bin/{name}", f"/usr/local/bin/{name}", f"/usr/local/venv/bin/{name}"]:
+        if os.path.exists(p) and os.access(p, os.X_OK):
             return p
             
     return None
