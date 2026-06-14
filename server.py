@@ -3,6 +3,7 @@
 # dependencies = [
 #     "pycapnp",
 #     "zstandard",
+#     "static-ffmpeg",
 # ]
 # ///
 
@@ -18,6 +19,14 @@ import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import capnp
 import zstandard
+
+# Load static-ffmpeg if available to ensure ffmpeg and ffprobe are in PATH
+try:
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+    print("[FFmpeg] static-ffmpeg paths added successfully")
+except Exception as e:
+    print(f"[FFmpeg] Note: Could not import or add paths via static-ffmpeg (will fallback to system ffmpeg): {e}")
 
 # Global schemas and telemetry cache
 log_capnp = None

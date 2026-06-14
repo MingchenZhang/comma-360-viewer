@@ -21,10 +21,10 @@
 <body>
     <!-- Hidden HTML5 Video Elements (Used as WebGL Textures) -->
     <div id="video-container" style="display: none;">
-        <video id="video-ecamera" src="car-fire/ecamera.mp4" playsinline muted loop crossorigin="anonymous"></video>
-        <video id="video-dcamera" src="car-fire/dcamera.mp4" playsinline muted loop crossorigin="anonymous"></video>
-        <video id="video-fcamera" src="car-fire/fcamera.mp4" playsinline muted loop crossorigin="anonymous"></video>
-        <audio id="audio-track" src="car-fire/qcamera.mp3" loop crossorigin="anonymous"></audio>
+        <video id="video-ecamera" playsinline muted loop crossorigin="anonymous"></video>
+        <video id="video-dcamera" playsinline muted loop crossorigin="anonymous"></video>
+        <video id="video-fcamera" playsinline muted loop crossorigin="anonymous"></video>
+        <audio id="audio-track" loop crossorigin="anonymous"></audio>
     </div>
 
     <div class="app-layout">
@@ -53,7 +53,7 @@
                     <h2><i data-lucide="folder"></i> ACTIVE ROUTE</h2>
                     <div class="control-group" style="margin-bottom: 0;">
                         <select id="route-selector" class="select-dropdown">
-                            <option value="car-fire">car-fire</option>
+                            <option value="">Loading routes...</option>
                         </select>
                     </div>
                 </section>

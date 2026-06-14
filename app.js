@@ -1902,14 +1902,14 @@ async function initRouteSelector() {
     const selector = document.getElementById('route-selector');
     if (!selector) return;
 
-    let routes = [{name: 'car-fire', type: 'h264 mp4'}];
+    let routes = [];
     try {
         const res = await fetch('routes.json?_t=' + Date.now());
         if (res.ok) {
             routes = await res.json();
         }
     } catch (e) {
-        console.warn("Could not load routes.json, using defaults", e);
+        console.warn("Could not load routes.json", e);
     }
 
     // Normalize routes to an array of objects to handle both flat string arrays (cached) and objects
@@ -1925,6 +1925,29 @@ async function initRouteSelector() {
 
     // Populate dropdown
     selector.innerHTML = '';
+    
+    if (state.routesList.length === 0) {
+        const option = document.createElement('option');
+        option.value = "";
+        option.textContent = "No routes found";
+        selector.appendChild(option);
+        
+        updateVideoSourceLabel('');
+        
+        // Show loading/empty overlay with instructions
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+            overlay.style.display = 'flex';
+            const overlayText = overlay.querySelector('.loading-text');
+            if (overlayText) {
+                overlayText.innerHTML = 'No route data found.<br><span style="font-size: 14px; color: var(--text-muted);">Please place route folders in the data directory.</span>';
+            }
+            const spinner = overlay.querySelector('.spinner');
+            if (spinner) spinner.style.display = 'none';
+        }
+        return;
+    }
+
     state.routesList.forEach(route => {
         const option = document.createElement('option');
         option.value = route.name;
