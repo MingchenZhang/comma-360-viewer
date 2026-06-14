@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comma.ai 360° Panorama Viewer</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="js/lucide.min.js"></script>
+    <!-- CSS -->
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- Leaflet Map CSS/JS -->
+    <link rel="stylesheet" href="js/leaflet.css" />
+    <script src="js/leaflet.js"></script>
+
+</head>
+<body>
+    <!-- Hidden HTML5 Video Elements (Used as WebGL Textures) -->
+    <div id="video-container" style="display: none;">
+        <video id="video-ecamera" src="car-fire/ecamera.mp4" playsinline muted loop crossorigin="anonymous"></video>
+        <video id="video-dcamera" src="car-fire/dcamera.mp4" playsinline muted loop crossorigin="anonymous"></video>
+        <video id="video-fcamera" src="car-fire/fcamera.mp4" playsinline muted loop crossorigin="anonymous"></video>
+        <audio id="audio-track" src="car-fire/qcamera.mp3" loop crossorigin="anonymous"></audio>
+    </div>
+
+    <div class="app-layout">
+        <!-- Sidebar Controls -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo-area">
+                    <div class="logo-icon">
+                        <i data-lucide="aperture"></i>
+                    </div>
+                    <div>
+                        <h1>COMMA 360</h1>
+                        <span class="sub-logo">PANORAMA STUDIO</span>
+                    </div>
+                </div>
+                <!-- Double click this status indicator to toggle Developer Console -->
+                <div class="status-indicator" id="status-indicator" title="Double-click for Developer Settings">
+                    <span class="status-dot green"></span>
+                    <span class="status-text">ONLINE</span>
+                </div>
+            </div>
+
+            <div class="sidebar-scrollable">
+                <!-- Route Selector -->
+                <section class="control-card">
+                    <h2><i data-lucide="folder"></i> ACTIVE ROUTE</h2>
+                    <div class="control-group" style="margin-bottom: 0;">
+                        <select id="route-selector" class="select-dropdown">
+                            <option value="car-fire">car-fire</option>
+                        </select>
+                    </div>
+                </section>
+
+                <!-- Video Controls -->
+                <section class="control-card">
+                    <h2><i data-lucide="video"></i> CAMERA OPTIONS</h2>
+                    
+                    <div class="control-group-row">
+                        <label>Driver Camera (dcamera)</label>
+                        <label class="switch">
+                            <input type="checkbox" id="driver-cam-toggle" checked>
+                            <span class="slider-toggle"></span>
+                        </label>
+                    </div>
+                    <div class="control-group-row">
+                        <label>Zoomed-in Camera (fcamera)</label>
+                        <label class="switch">
+                            <input type="checkbox" id="narrow-cam-toggle" checked>
+                            <span class="slider-toggle"></span>
+                        </label>
+                    </div>
+                </section>
+
+                <!-- Status Panel -->
+                <section class="control-card info-card">
+                    <h2><i data-lucide="activity"></i> SYSTEM METRICS</h2>
+                    <div class="metrics-grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div class="metric-item">
+                            <span class="metric-label">PROJECTION</span>
+                            <span class="metric-value">SPHERE 360°</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">FEED RESOLUTION</span>
+                            <span class="metric-value font-mono">1928x1208</span>
+                        </div>
+                        <div class="metric-item" style="grid-column: span 2;">
+                            <span class="metric-label">VIDEO SOURCE</span>
+                            <span id="metric-video-source" class="metric-value font-mono" style="color: var(--color-secondary); text-transform: uppercase;">h264 mp4</span>
+                        </div>
+                    </div>
+                </section>
+                
+                <!-- Helper Guide -->
+                <section class="control-card guide-card">
+                    <h2><i data-lucide="help-circle"></i> CONTROLS</h2>
+                    <p>• Click and drag in the viewport to look around.</p>
+                    <p>• Use your scroll wheel to zoom in and out.</p>
+                    <p>• Snap view instantly using the HUD buttons below.</p>
+                </section>
+
+                <!-- Hidden Developer Calibration Menu (Toggled via double-click on status or pressing 'D') -->
+                <section class="control-card dev-card" id="developer-panel" style="display: none;">
+                    <div class="dev-header">
+                        <h2><i data-lucide="terminal"></i> DEV CALIBRATION</h2>
+                        <span class="dev-badge">DEV MODE</span>
+                    </div>
+                    
+                    <div class="calibration-section">
+                        <h3>Zoomed-in Camera (fcamera)</h3>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Yaw (Horizontal)</span>
+                                <span id="narrow-yaw-value">180°</span>
+                            </div>
+                            <input type="range" id="narrow-yaw" min="0" max="360" step="1" value="180">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Pitch (Tilt)</span>
+                                <span id="narrow-pitch-value">0°</span>
+                            </div>
+                            <input type="range" id="narrow-pitch" min="-30" max="30" step="0.5" value="0">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Roll (Twist)</span>
+                                <span id="narrow-roll-value">0°</span>
+                            </div>
+                            <input type="range" id="narrow-roll" min="-30" max="30" step="0.5" value="0">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Focal Scale</span>
+                                <span id="narrow-focal-value">1.00</span>
+                            </div>
+                            <input type="range" id="narrow-focal" min="0.1" max="3.0" step="0.01" value="1.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Max Lens Angle</span>
+                                <span id="narrow-max-theta-value">30°</span>
+                            </div>
+                            <input type="range" id="narrow-max-theta" min="5" max="90" step="1" value="30">
+                        </div>
+                        <details class="advanced-pan-details">
+                            <summary>Advanced Pan Offsets</summary>
+                            <div class="control-group">
+                                <div class="slider-header">
+                                    <span>Pan X (Left/Right)</span>
+                                    <span id="narrow-pan-x-value">0 cm</span>
+                                </div>
+                                <input type="range" id="narrow-pan-x" min="-100" max="100" step="0.5" value="0">
+                            </div>
+                            <div class="control-group">
+                                <div class="slider-header">
+                                    <span>Pan Y (Up/Down)</span>
+                                    <span id="narrow-pan-y-value">0 cm</span>
+                                </div>
+                                <input type="range" id="narrow-pan-y" min="-100" max="100" step="0.5" value="0">
+                            </div>
+                            <div class="control-group">
+                                <div class="slider-header">
+                                    <span>Pan Z (Fore/Aft)</span>
+                                    <span id="narrow-pan-z-value">0 cm</span>
+                                </div>
+                                <input type="range" id="narrow-pan-z" min="-100" max="100" step="0.5" value="0">
+                            </div>
+                        </details>
+                    </div>
+                    
+                    <div class="calibration-section">
+                        <h3>Front Camera (ecamera)</h3>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Yaw (Horizontal)</span>
+                                <span id="front-yaw-value">180°</span>
+                            </div>
+                            <input type="range" id="front-yaw" min="0" max="360" step="1" value="180">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Pitch (Tilt)</span>
+                                <span id="front-pitch-value">0°</span>
+                            </div>
+                            <input type="range" id="front-pitch" min="-30" max="30" step="0.5" value="0">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Roll (Twist)</span>
+                                <span id="front-roll-value">0°</span>
+                            </div>
+                            <input type="range" id="front-roll" min="-30" max="30" step="0.5" value="0">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Focal Scale</span>
+                                <span id="front-focal-value">0.32</span>
+                            </div>
+                            <input type="range" id="front-focal" min="0.1" max="1.0" step="0.01" value="0.32">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Max Lens Angle</span>
+                                <span id="front-max-theta-value">120°</span>
+                            </div>
+                            <input type="range" id="front-max-theta" min="30" max="170" step="1" value="120">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Lens Angle Bias (L/R)</span>
+                                <span id="front-max-theta-bias-value">0°</span>
+                            </div>
+                            <input type="range" id="front-max-theta-bias" min="-30" max="30" step="1" value="0">
+                        </div>
+                        <details class="advanced-pan-details">
+                            <summary>Advanced Pan Offsets</summary>
+                            <div class="control-group">
+                                <div class="slider-header">
+                                    <span>Pan X (Left/Right)</span>
+                                    <span id="front-pan-x-value">0 cm</span>
+                                </div>
+                                <input type="range" id="front-pan-x" min="-100" max="100" step="0.5" value="0">
+                            </div>
+                            <div class="control-group">
+                                <div class="slider-header">
+                                    <span>Pan Y (Up/Down)</span>
+                                    <span id="front-pan-y-value">0 cm</span>
+                                </div>
+                                <input type="range" id="front-pan-y" min="-100" max="100" step="0.5" value="0">
+                            </div>
+                            <div class="control-group">
+                                <div class="slider-header">
+                                    <span>Pan Z (Fore/Aft)</span>
+                                    <span id="front-pan-z-value">0 cm</span>
+                                </div>
+                                <input type="range" id="front-pan-z" min="-100" max="100" step="0.5" value="0">
+                            </div>
+                        </details>
+                    </div>
+
+                    <div class="calibration-section">
+                        <h3>Driver Camera (dcamera)</h3>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Yaw (Horizontal)</span>
+                                <span id="driver-yaw-value">0°</span>
+                            </div>
+                            <input type="range" id="driver-yaw" min="0" max="360" step="1" value="0">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Pitch (Tilt)</span>
+                                <span id="driver-pitch-value">0°</span>
+                            </div>
+                            <input type="range" id="driver-pitch" min="-30" max="30" step="0.5" value="0">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Roll (Twist)</span>
+                                <span id="driver-roll-value">0°</span>
+                            </div>
+                            <input type="range" id="driver-roll" min="-30" max="30" step="0.5" value="0">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Focal Scale</span>
+                                <span id="driver-focal-value">0.44</span>
+                            </div>
+                            <input type="range" id="driver-focal" min="0.1" max="1.0" step="0.01" value="0.44">
+                        </div>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Max Lens Angle</span>
+                                <span id="driver-max-theta-value">120°</span>
+                            </div>
+                            <input type="range" id="driver-max-theta" min="30" max="170" step="1" value="120">
+                        </div>
+                        <details class="advanced-pan-details">
+                            <summary>Advanced Pan Offsets</summary>
+                            <div class="control-group">
+                                <div class="slider-header">
+                                    <span>Pan X (Left/Right)</span>
+                                    <span id="driver-pan-x-value">0 cm</span>
+                                </div>
+                                <input type="range" id="driver-pan-x" min="-100" max="100" step="0.5" value="0">
+                            </div>
+                            <div class="control-group">
+                                <div class="slider-header">
+                                    <span>Pan Y (Up/Down)</span>
+                                    <span id="driver-pan-y-value">0 cm</span>
+                                </div>
+                                <input type="range" id="driver-pan-y" min="-100" max="100" step="0.5" value="0">
+                            </div>
+                            <div class="control-group">
+                                <div class="slider-header">
+                                    <span>Pan Z (Fore/Aft)</span>
+                                    <span id="driver-pan-z-value">0 cm</span>
+                                </div>
+                                <input type="range" id="driver-pan-z" min="-100" max="100" step="0.5" value="0">
+                            </div>
+                        </details>
+                    </div>
+
+                    <div class="calibration-section">
+                        <h3>Global Settings</h3>
+                        <div class="control-group">
+                            <div class="slider-header">
+                                <span>Sphere Radius</span>
+                                <span id="proj-radius-value">10.0m</span>
+                            </div>
+                            <input type="range" id="proj-radius" min="5" max="30" step="0.5" value="10">
+                        </div>
+                        <div class="control-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px;">
+                            <button id="reset-calibration" class="btn btn-secondary btn-full" style="margin-top: 0; padding: 10px 5px; font-size: 0.85rem;">
+                                <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i> Reset Offsets
+                            </button>
+                            <button id="export-calibration" class="btn btn-primary btn-full" style="margin-top: 0; padding: 10px 5px; font-size: 0.85rem;">
+                                <i data-lucide="clipboard" style="width: 14px; height: 14px;"></i> Copy Settings
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+            
+            <div class="sidebar-footer">
+                <span class="author">COMMA VIEWER v1.1.0</span>
+                <span class="sep">•</span>
+                <a href="https://github.com/commaai/openpilot" target="_blank" class="footer-link">openpilot</a>
+            </div>
+        </aside>
+
+        <!-- Main Display and Timeline Container -->
+        <main class="main-content">
+            <!-- 3D Viewport -->
+            <div class="viewport-container">
+                <div id="three-container"></div>
+                
+                <!-- Viewport Floating HUD -->
+                <div class="hud-layer">
+                    <div class="hud-top-row">
+                        <div class="hud-top-left-group" style="display: flex; gap: 12px; align-items: flex-start; pointer-events: none;">
+                            <!-- Sidebar Toggle Button -->
+                            <button id="sidebar-toggle-btn" class="hud-panel sidebar-toggle-btn" title="Toggle Sidebar (B)">
+                                <i data-lucide="arrow-left" id="sidebar-toggle-icon"></i>
+                            </button>
+                            <!-- Camera Heading Compass -->
+                            <div class="hud-panel compass-panel">
+                                <span class="hud-label">HEADING</span>
+                                <div class="compass-display">
+                                    <span id="compass-yaw">0.0°</span>
+                                    <span id="compass-dir">N</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Video Sync HUD -->
+                        <div class="hud-panel sync-panel" id="sync-hud">
+                            <span class="hud-label">SYNC STATE</span>
+                            <div class="sync-status">
+                                <span class="sync-light green"></span>
+                                <span id="sync-text">SYNCHRONIZED</span>
+                            </div>
+                            <span id="sync-drift" class="hud-subtext">Drift: 0.00s</span>
+                        </div>
+                    </div>
+                    
+                    <div class="hud-center-overlay" id="loading-overlay">
+                        <div class="loader-spinner"></div>
+                        <p class="loader-text">Loading camera feeds...</p>
+                    </div>
+
+                    <!-- Telemetry Dashboard (Hidden by default) -->
+                    <div id="telemetry-panel" class="hud-panel telemetry-overlay" style="display: none;">
+                        <div class="telemetry-header">
+                            <h3><i data-lucide="gauge"></i> TELEMETRY</h3>
+                            <button id="telemetry-close-btn" class="icon-close-btn" title="Hide Telemetry"><i data-lucide="x"></i></button>
+                        </div>
+                        <div class="telemetry-body">
+                            <!-- Speed & Steering Gauge Row -->
+                            <div class="telemetry-row main-metrics">
+                                <div class="telemetry-metric-large">
+                                    <div class="metric-circle-gauge">
+                                        <div class="gauge-value" id="tel-speed">0.0</div>
+                                        <div class="gauge-unit">MPH</div>
+                                    </div>
+                                    <span class="telemetry-label">SPEED</span>
+                                </div>
+                                <div class="telemetry-metric-large">
+                                    <div class="steering-wheel-container">
+                                        <div class="steering-wheel" id="tel-steering-wheel">
+                                            <div class="wheel-spoke horizontal"></div>
+                                            <div class="wheel-spoke vertical"></div>
+                                        </div>
+                                        <div class="gauge-value" id="tel-steering">0°</div>
+                                    </div>
+                                    <span class="telemetry-label">STEERING</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Pedals, Gear & Blinker Indicators -->
+                            <div class="telemetry-row indicators-row">
+                                <div id="tel-pedal-gas" class="pedal-indicator">GAS</div>
+                                <div id="tel-pedal-brake" class="pedal-indicator">BRAKE</div>
+                                <div id="tel-gear" class="gear-indicator">D</div>
+                            </div>
+
+                            <div class="telemetry-row blinkers-row">
+                                <i data-lucide="chevron-left" id="tel-blinker-l" class="blinker-icon"></i>
+                                <span class="blinkers-label">INDICATORS</span>
+                                <i data-lucide="chevron-right" id="tel-blinker-r" class="blinker-icon"></i>
+                            </div>
+
+                            <!-- Alert Display (Dynamic openpilot alerts) -->
+                            <div class="telemetry-alert-box" id="tel-alert-box" style="display: none;">
+                                <div class="alert-icon-wrapper"><i data-lucide="alert-triangle" id="tel-alert-icon"></i></div>
+                                <div class="alert-content">
+                                    <div class="alert-title" id="tel-alert-title">CRITICAL ERROR</div>
+                                    <div class="alert-desc" id="tel-alert-desc">TAKE CONTROL IMMEDIATELY</div>
+                                </div>
+                            </div>
+                            
+                            <!-- System Metrics Subgrid -->
+                            <div class="telemetry-subgrid">
+                                <div class="telemetry-sub-item">
+                                    <span class="sub-label">STATE</span>
+                                    <span class="sub-value" id="tel-state">DISABLED</span>
+                                </div>
+                                <div class="telemetry-sub-item">
+                                    <span class="sub-label">CPU TEMP</span>
+                                    <span class="sub-value font-mono" id="tel-cpu-temp">--°C</span>
+                                </div>
+                                <div class="telemetry-sub-item" style="grid-column: span 2;">
+                                    <span class="sub-label">GPS COORDS</span>
+                                    <span class="sub-value font-mono" id="tel-gps-coords" style="font-size: 0.65rem;">--</span>
+                                </div>
+                            </div>
+
+                            <!-- Inline Mini Map -->
+                            <div class="telemetry-map-container" id="tel-map-container">
+                                <div id="telemetry-map"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Look Reset Helper Buttons -->
+                    <div class="hud-bottom-actions">
+                        <button id="look-front-btn" class="hud-btn" title="Look Forward">
+                            <i data-lucide="move-up"></i> Look Front
+                        </button>
+                        <button id="look-back-btn" class="hud-btn" title="Look Backward">
+                            <i data-lucide="move-down"></i> Look Back
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer: Simple Timeline & Playback controls -->
+            <footer class="dashboard-footer">
+                <!-- Timeline Slider -->
+                <div class="timeline-container">
+                    <span id="time-current" class="time-label font-mono">00:00</span>
+                    <div class="slider-wrapper">
+                        <input type="range" id="timeline-slider" min="0" max="60" step="0.05" value="0">
+                        <div class="slider-progress-bar" id="timeline-progress"></div>
+                    </div>
+                    <span id="time-duration" class="time-label font-mono">00:00</span>
+                </div>
+
+                <!-- Playback controls -->
+                <div class="dashboard-bottom-bar">
+                    <!-- Media Controls -->
+                    <div class="media-controls">
+                        <button id="btn-step-back" class="btn btn-secondary btn-circle-small" title="Step Frame Backward (Left Arrow / ,)">
+                            <i data-lucide="skip-back"></i>
+                        </button>
+                        <button id="btn-play-pause" class="btn btn-primary btn-circle" title="Play / Pause (Spacebar)">
+                            <i data-lucide="play" id="play-icon"></i>
+                        </button>
+                        <button id="btn-step-fwd" class="btn btn-secondary btn-circle-small" title="Step Frame Forward (Right Arrow / .)">
+                            <i data-lucide="skip-forward"></i>
+                        </button>
+                        
+                        <button id="btn-mute" class="btn btn-secondary btn-circle-small" style="display: none;" title="Mute / Unmute Audio (M)">
+                            <i data-lucide="volume-x" id="mute-icon"></i>
+                        </button>
+                        
+                        <div class="btn-group">
+                            <button id="btn-speed-05" class="btn btn-small" data-speed="0.5">0.5x</button>
+                            <button id="btn-speed-10" class="btn btn-small active" data-speed="1.0">1.0x</button>
+                            <button id="btn-speed-15" class="btn btn-small" data-speed="1.5">1.5x</button>
+                            <button id="btn-speed-20" class="btn btn-small" data-speed="2.0">2.0x</button>
+                        </div>
+                        
+                        <button id="btn-toggle-telemetry" class="btn btn-secondary" style="margin-left: 12px; display: flex; align-items: center; gap: 6px;" title="Toggle Telemetry Overlay">
+                            <i data-lucide="gauge" style="width: 14px; height: 14px;"></i> Telemetry
+                        </button>
+                    </div>
+                    
+                </div>
+            </footer>
+        </main>
+    </div>
+
+    <!-- Main JS Application -->
+    <script type="module" src="app.js"></script>
+</body>
+</html>

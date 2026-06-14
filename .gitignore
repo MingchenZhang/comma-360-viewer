@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Route data
+realdata/
+car-fire/
+routes.json
+
+# Audio artifacts
+*.mp3
+
+# IDE / tooling
+.antigravitycli/
+.gemini/
