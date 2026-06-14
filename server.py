@@ -3,7 +3,6 @@
 # dependencies = [
 #     "pycapnp",
 #     "zstandard",
-#     "static-ffmpeg",
 # ]
 # ///
 
@@ -16,17 +15,52 @@ import subprocess
 import urllib.parse
 import threading
 import datetime
+import shutil
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import capnp
 import zstandard
 
-# Load static-ffmpeg if available to ensure ffmpeg and ffprobe are in PATH
-try:
-    import static_ffmpeg
-    static_ffmpeg.add_paths()
-    print("[FFmpeg] static-ffmpeg paths added successfully")
-except Exception as e:
-    print(f"[FFmpeg] Note: Could not import or add paths via static-ffmpeg (will fallback to system ffmpeg): {e}")
+# Locate ffmpeg and ffprobe binaries
+FFMPEG_PATH = "ffmpeg"
+FFPROBE_PATH = "ffprobe"
+
+def find_binary(name):
+    # 1. Try standard shutil.which (searches current PATH)
+    path = shutil.which(name)
+    if path:
+        return path
+        
+    # 2. Try running shell lookup (may resolve bash aliases or shell configurations)
+    try:
+        res = subprocess.run(f"which {name}", shell=True, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    except Exception:
+        pass
+        
+    # 3. Check common binary paths directly
+    for p in [f"/usr/bin/{name}", f"/usr/local/bin/{name}"]:
+        if os.path.exists(p):
+            return p
+            
+    return None
+
+def init_ffmpeg():
+    global FFMPEG_PATH, FFPROBE_PATH
+    
+    # Attempt to locate ffmpeg / ffprobe locally
+    f_path = find_binary("ffmpeg")
+    p_path = find_binary("ffprobe")
+            
+    if f_path:
+        FFMPEG_PATH = f_path
+    if p_path:
+        FFPROBE_PATH = p_path
+        
+    print(f"[FFmpeg] Using ffmpeg binary: {FFMPEG_PATH}")
+    print(f"[FFmpeg] Using ffprobe binary: {FFPROBE_PATH}")
+
+init_ffmpeg()
 
 # Global schemas and telemetry cache
 log_capnp = None
@@ -174,7 +208,7 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
             print(f"[Memory Transmux] Transmuxing {hevc_path} directly to memory via pipe...")
             try:
                 cmd = [
-                    "ffmpeg", "-y",
+                    FFMPEG_PATH, "-y",
                     "-i", hevc_path,
                     "-c:v", "copy",
                     "-movflags", "frag_keyframe+empty_moov+default_base_moof",
@@ -216,7 +250,7 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
             try:
                 # Get video first packet PTS
                 cmd_v = [
-                    "ffprobe", "-v", "error",
+                    FFPROBE_PATH, "-v", "error",
                     "-select_streams", "v:0",
                     "-show_entries", "packet=pts_time",
                     "-of", "default=noprint_wrappers=1:nokey=1",
@@ -232,7 +266,7 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
                 
                 # Get audio first packet PTS
                 cmd_a = [
-                    "ffprobe", "-v", "error",
+                    FFPROBE_PATH, "-v", "error",
                     "-select_streams", "a:0",
                     "-show_entries", "packet=pts_time",
                     "-of", "default=noprint_wrappers=1:nokey=1",
@@ -256,7 +290,7 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
 
             try:
                 cmd = [
-                    "ffmpeg", "-y",
+                    FFMPEG_PATH, "-y",
                     "-probesize", "10000000",
                     "-analyzeduration", "10000000",
                     "-i", ts_path,
@@ -406,7 +440,7 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
         if mp4_exists:
             # Check codec using ffprobe
             cmd = [
-                "ffprobe", "-v", "error",
+                FFPROBE_PATH, "-v", "error",
                 "-select_streams", "v:0",
                 "-show_entries", "stream=codec_name",
                 "-of", "default=noprint_wrappers=1:nokey=1",
