@@ -2078,6 +2078,7 @@ function updateCameraTogglesUI(routeObj) {
         const row = driverToggle.closest('.control-group-row');
         if (hasDCamera) {
             driverToggle.disabled = false;
+            driverToggle.checked = true; // Automatically enable driver camera if available
             if (row) row.classList.remove('disabled');
         } else {
             driverToggle.checked = false;
