@@ -53,9 +53,9 @@ const state = {
         devMode: false
     },
     cameras: {
-        ecamera: { el: null, texture: null, loaded: false },
-        dcamera: { el: null, texture: null, loaded: false },
-        fcamera: { el: null, texture: null, loaded: false }
+        ecamera: { el: null, texture: null, loaded: false, jmuxer: null },
+        dcamera: { el: null, texture: null, loaded: false, jmuxer: null },
+        fcamera: { el: null, texture: null, loaded: false, jmuxer: null }
     },
     routesList: []
 };
@@ -108,6 +108,8 @@ if (document.readyState === 'loading') {
 // Setup Video Elements
 function setupVideos() {
     const ids = ['video-ecamera', 'video-dcamera', 'video-fcamera'];
+    const activeRoute = document.getElementById('route-selector')?.value;
+    const routeObj = state.routesList?.find(r => r.name === activeRoute);
     
     ids.forEach(id => {
         const key = id.replace('video-', '');
@@ -162,24 +164,15 @@ function setupVideos() {
                 if (textEl) {
                     textEl.innerHTML = `<span style="color: #ff3b30; font-weight: bold; font-family: var(--font-heading);">LOAD ERROR</span><br>` +
                                       `<span style="font-size: 0.85rem; color: var(--text-secondary);">` +
-                                      `Failed to load <b>${key}</b> (${video.src.split('/').pop()}).<br>` +
+                                      `Failed to load <b>${key}</b> (${video.src ? video.src.split('/').pop() : 'stream'}).<br>` +
                                       `This browser/OS configuration may lack hardware-accelerated H.265 (HEVC) decode support.</span>`;
                 }
             }
         });
 
-        // Trigger load if camera is available
-        const activeRoute = document.getElementById('route-selector')?.value;
-        const routeObj = state.routesList?.find(r => r.name === activeRoute);
-        const isAvailable = routeObj ? (routeObj['has_' + key] !== false) : true;
-        if (isAvailable) {
-            video.load();
-        } else {
-            state.cameras[key].loaded = true;
-            video.src = "";
-        }
+        // Load the initial feed for this camera
+        loadCameraFeed(key, activeRoute, routeObj);
     });
-
 
     // Setup Audio Track Element
     const audio = document.getElementById('audio-track');
@@ -223,6 +216,78 @@ function setupVideos() {
         });
         
         audio.load();
+    }
+}
+
+// Fetch raw HEVC stream and feed it into the camera's jmuxer
+async function loadHevcCamera(key, url) {
+    try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP status ${res.status}`);
+        const arrayBuffer = await res.arrayBuffer();
+        
+        // Ensure jmuxer still exists (hasn't been destroyed by route change during download)
+        const jmuxer = state.cameras[key].jmuxer;
+        if (jmuxer) {
+            jmuxer.feed({
+                video: new Uint8Array(arrayBuffer)
+            });
+            console.log(`[JMuxer ${key}] Successfully fed raw HEVC stream of ${arrayBuffer.byteLength} bytes`);
+        }
+    } catch (e) {
+        console.error(`[JMuxer ${key}] Failed to load HEVC from ${url}:`, e);
+        // Trigger video element error event to show standard error overlay
+        const video = state.cameras[key].el;
+        if (video) {
+            const event = new Event('error');
+            video.dispatchEvent(event);
+        }
+    }
+}
+
+// Loads a camera feed, either using client-side JMuxer for raw HEVC or falling back to MP4
+function loadCameraFeed(key, routeName, routeObj) {
+    const video = state.cameras[key].el;
+    if (!video) return;
+
+    // Destroy any existing JMuxer instance to prevent leaks
+    if (state.cameras[key].jmuxer) {
+        try {
+            state.cameras[key].jmuxer.destroy();
+        } catch (e) {
+            console.warn(`[JMuxer ${key}] Error destroying instance:`, e);
+        }
+        state.cameras[key].jmuxer = null;
+    }
+
+    const isAvailable = routeObj ? (routeObj['has_' + key] !== false) : true;
+    if (!isAvailable) {
+        video.removeAttribute('src');
+        video.src = "";
+        state.cameras[key].loaded = true;
+        return;
+    }
+
+    const hasHevc = routeObj ? (routeObj['has_' + key + '_hevc'] === true) : false;
+
+    if (hasHevc) {
+        console.log(`[Camera ${key}] Initializing browser-side JMuxer for raw HEVC stream`);
+        
+        state.cameras[key].jmuxer = new JMuxer({
+            node: video,
+            mode: 'video',
+            videoCodec: 'H265',
+            flushingTime: 0,
+            fps: 20,
+            debug: false
+        });
+
+        const url = `${routeName}/${key}.hevc`;
+        loadHevcCamera(key, url);
+    } else {
+        console.log(`[Camera ${key}] Using native browser playback for MP4`);
+        video.src = `${routeName}/${key}.mp4`;
+        video.load();
     }
 }
 
@@ -2006,25 +2071,7 @@ async function initRouteSelector() {
     const activeRoute = savedExists ? savedRoute : state.routesList[0].name;
 
     selector.value = activeRoute;
-    
-    // Update video/audio sources in DOM before setupVideos loads them
-    const camFiles = {
-        ecamera: 'ecamera.mp4',
-        dcamera: 'dcamera.mp4',
-        fcamera: 'fcamera.mp4'
-    };
     const activeRouteObj = state.routesList.find(r => r.name === activeRoute);
-    Object.keys(camFiles).forEach(key => {
-        const video = document.getElementById(`video-${key}`);
-        if (video) {
-            const isAvailable = activeRouteObj ? (activeRouteObj['has_' + key] !== false) : true;
-            if (isAvailable) {
-                video.src = `${activeRoute}/${camFiles[key]}`;
-            } else {
-                video.removeAttribute('src');
-            }
-        }
-    });
 
     const audio = document.getElementById('audio-track');
     if (audio) {
@@ -2131,24 +2178,8 @@ function loadRoute(routeName) {
     const activeRouteObj = state.routesList.find(r => r.name === routeName);
     updateCameraTogglesUI(activeRouteObj);
 
-    const camFiles = {
-        ecamera: 'ecamera.mp4',
-        dcamera: 'dcamera.mp4',
-        fcamera: 'fcamera.mp4'
-    };
-
-    Object.keys(camFiles).forEach(key => {
-        const video = state.cameras[key].el;
-        if (video) {
-            const isAvailable = activeRouteObj ? (activeRouteObj['has_' + key] !== false) : true;
-            if (isAvailable) {
-                video.src = `${routeName}/${camFiles[key]}`;
-                video.load();
-            } else {
-                video.src = "";
-                state.cameras[key].loaded = true;
-            }
-        }
+    Object.keys(state.cameras).forEach(key => {
+        loadCameraFeed(key, routeName, activeRouteObj);
     });
 
     const audio = document.getElementById('audio-track');

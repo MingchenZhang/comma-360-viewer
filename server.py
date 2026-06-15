@@ -480,9 +480,13 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
                     break
                     
             # Check which cameras exist in the route directory
-            has_ecamera = os.path.exists(os.path.join(route_dir, "ecamera.hevc")) or os.path.exists(os.path.join(route_dir, "ecamera.mp4"))
-            has_dcamera = os.path.exists(os.path.join(route_dir, "dcamera.hevc")) or os.path.exists(os.path.join(route_dir, "dcamera.mp4"))
-            has_fcamera = os.path.exists(os.path.join(route_dir, "fcamera.hevc")) or os.path.exists(os.path.join(route_dir, "fcamera.mp4"))
+            has_ecamera_hevc = os.path.exists(os.path.join(route_dir, "ecamera.hevc"))
+            has_dcamera_hevc = os.path.exists(os.path.join(route_dir, "dcamera.hevc"))
+            has_fcamera_hevc = os.path.exists(os.path.join(route_dir, "fcamera.hevc"))
+
+            has_ecamera = has_ecamera_hevc or os.path.exists(os.path.join(route_dir, "ecamera.mp4"))
+            has_dcamera = has_dcamera_hevc or os.path.exists(os.path.join(route_dir, "dcamera.mp4"))
+            has_fcamera = has_fcamera_hevc or os.path.exists(os.path.join(route_dir, "fcamera.mp4"))
                     
             routes_data.append({
                 "name": s,
@@ -490,7 +494,10 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
                 "start_time": start_time,
                 "has_ecamera": has_ecamera,
                 "has_dcamera": has_dcamera,
-                "has_fcamera": has_fcamera
+                "has_fcamera": has_fcamera,
+                "has_ecamera_hevc": has_ecamera_hevc,
+                "has_dcamera_hevc": has_dcamera_hevc,
+                "has_fcamera_hevc": has_fcamera_hevc
             })
             
         json_bytes = json.dumps(routes_data, indent=2).encode('utf-8')
