@@ -75,6 +75,8 @@ init_ffmpeg()
 log_capnp = None
 telemetry_cache = {}
 telemetry_lock = threading.Lock()
+route_time_cache = {}
+route_time_lock = threading.Lock()
 
 PORT = 8080
 STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -435,6 +437,127 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"[Server] Unexpected error sending response: {e}")
 
+    def get_fallback_mtime(self, route_path):
+        route_dir = os.path.join(WORKSPACE, route_path)
+        for filename in ["qlog.zst", "ecamera.hevc", "ecamera.mp4"]:
+            filepath = os.path.join(route_dir, filename)
+            if os.path.exists(filepath):
+                mtime = os.path.getmtime(filepath)
+                return datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+        return ""
+
+    def get_accurate_segment_time(self, route_path):
+        global log_capnp
+        
+        parent_dir, folder_name = os.path.split(route_path)
+        if "--" in folder_name:
+            parts = folder_name.split('--')
+            if len(parts) >= 3:
+                route_prefix = "--".join(parts[:-1])
+                segment_index = int(parts[-1])
+            else:
+                route_prefix = folder_name
+                segment_index = 0
+        else:
+            route_prefix = folder_name
+            segment_index = 0
+            
+        cache_key = os.path.join(parent_dir, route_prefix)
+        
+        # 1. Check Cache
+        with route_time_lock:
+            if cache_key in route_time_cache:
+                route_start_time = route_time_cache[cache_key]
+                if route_start_time is not None:
+                    seg_time = route_start_time + segment_index * 60.0
+                    return datetime.datetime.fromtimestamp(seg_time).strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    return self.get_fallback_mtime(route_path)
+                    
+        # 2. Not in Cache: Scan sibling segments
+        resolved_route_start = None
+        
+        # List siblings
+        sibling_folders = []
+        search_dir = os.path.join(WORKSPACE, parent_dir) if parent_dir else WORKSPACE
+        if os.path.exists(search_dir):
+            try:
+                for item in os.listdir(search_dir):
+                    if item.startswith(route_prefix + "--") and os.path.isdir(os.path.join(search_dir, item)):
+                        sibling_folders.append(item)
+            except Exception as e:
+                print(f"[Dynamic Routes] Error listing siblings: {e}")
+                
+        # Sort siblings by segment index
+        def get_seg_idx(name):
+            try:
+                return int(name.split('--')[-1])
+            except Exception:
+                return 9999
+                
+        sibling_folders.sort(key=get_seg_idx)
+        
+        # Load schemas if not already loaded
+        if log_capnp is None:
+            load_schemas()
+            
+        if log_capnp is not None:
+            for sib in sibling_folders:
+                sib_idx = get_seg_idx(sib)
+                sib_path = os.path.join(parent_dir, sib)
+                sib_full_path = os.path.join(WORKSPACE, sib_path)
+                qlog_path = os.path.join(sib_full_path, "qlog.zst")
+                
+                if os.path.exists(qlog_path):
+                    try:
+                        dctx = zstandard.ZstdDecompressor()
+                        with open(qlog_path, 'rb') as f:
+                            compressed = f.read()
+                        with dctx.stream_reader(compressed) as reader:
+                            dat = reader.read()
+                            
+                        events = list(log_capnp.Event.read_multiple_bytes(dat))
+                        gps_events = [e for e in events if e.which() == 'gpsLocation']
+                        
+                        # Find first event with a valid GPS lock (epoch >= 2020-01-01)
+                        valid_gps = None
+                        for ev in gps_events:
+                            gps = ev.gpsLocation
+                            if gps.unixTimestampMillis > 1577836800000:
+                                valid_gps = ev
+                                break
+                                
+                        if valid_gps:
+                            gps = valid_gps.gpsLocation
+                            
+                            # Get start mono time
+                            road_frames = [e for e in events if e.which() == 'roadEncodeIdx']
+                            if road_frames:
+                                road_frames.sort(key=lambda x: x.roadEncodeIdx.frameId)
+                                start_mono = road_frames[0].roadEncodeIdx.timestampSof
+                            else:
+                                start_mono = events[0].logMonoTime
+                                
+                            gps_time_sec = gps.unixTimestampMillis / 1000.0
+                            mono_diff_sec = (valid_gps.logMonoTime - start_mono) / 1e9
+                            sib_start_time = gps_time_sec - mono_diff_sec
+                            
+                            # Back-propagate to route start (segment 0)
+                            resolved_route_start = sib_start_time - sib_idx * 60.0
+                            break
+                    except Exception as e:
+                        print(f"[Dynamic Routes] Error reading {qlog_path}: {e}")
+                        
+        # Cache the result
+        with route_time_lock:
+            route_time_cache[cache_key] = resolved_route_start
+            
+        if resolved_route_start is not None:
+            seg_time = resolved_route_start + segment_index * 60.0
+            return datetime.datetime.fromtimestamp(seg_time).strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            return self.get_fallback_mtime(route_path)
+
     def send_routes_json(self):
         # Find all route subdirectories in WORKSPACE (and WORKSPACE/realdata if it exists)
         subdirs = []
@@ -469,16 +592,10 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
         for s in subdirs:
             rtype = self.get_route_type(s)
             
-            # Determine start time using file mtime of qlog.zst, ecamera.hevc, or ecamera.mp4
-            start_time = ""
+            # Determine start time using the accurate segment time algorithm
+            start_time = self.get_accurate_segment_time(s)
             route_dir = os.path.join(WORKSPACE, s)
-            for filename in ["qlog.zst", "ecamera.hevc", "ecamera.mp4"]:
-                filepath = os.path.join(route_dir, filename)
-                if os.path.exists(filepath):
-                    mtime = os.path.getmtime(filepath)
-                    start_time = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
-                    break
-                    
+            
             # Check which cameras exist in the route directory
             has_ecamera_hevc = os.path.exists(os.path.join(route_dir, "ecamera.hevc"))
             has_dcamera_hevc = os.path.exists(os.path.join(route_dir, "dcamera.hevc"))

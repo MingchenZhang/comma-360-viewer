@@ -2277,6 +2277,13 @@ async function initRouteSelector() {
             has_fcamera_hevc: isHevcRoute
         };
     });
+    // Sort routes in descending time order (newest first). If start_time is missing, sort last.
+    state.routesList.sort((a, b) => {
+        if (!a.start_time && !b.start_time) return a.name.localeCompare(b.name);
+        if (!a.start_time) return 1;
+        if (!b.start_time) return -1;
+        return b.start_time.localeCompare(a.start_time);
+    });
 
     // Populate dropdown
     selector.innerHTML = '';
@@ -2311,15 +2318,13 @@ async function initRouteSelector() {
         if (route.name.includes('--')) {
             const cleanName = route.name.includes('/') ? route.name.split('/').pop() : route.name;
             const parts = cleanName.split('--');
-            if (parts.length >= 3) {
-                displayName = `Segment ${parts[2]} (${parts[1]})`;
-            }
-        } else if (route.name === 'car-fire' || route.name.endsWith('car-fire')) {
-            displayName = '🔥 Car Fire Demo';
-        }
-        
-        if (route.start_time) {
-            displayName += ` (${route.start_time})`;
+            const segmentId = parts[parts.length - 1];
+            const dt = route.start_time || 'unknown';
+            displayName = `${dt}-${segmentId}`;
+        } else {
+            const cleanName = route.name.includes('/') ? route.name.split('/').pop() : route.name;
+            const dt = route.start_time || 'unknown';
+            displayName = `${dt}-${cleanName}`;
         }
         
         option.textContent = displayName;
