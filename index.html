@@ -19,11 +19,11 @@
 
 </head>
 <body>
-    <!-- Hidden HTML5 Video Elements (Used as WebGL Textures) -->
-    <div id="video-container" style="display: none;">
-        <video id="video-ecamera" playsinline muted loop crossorigin="anonymous"></video>
-        <video id="video-dcamera" playsinline muted loop crossorigin="anonymous"></video>
-        <video id="video-fcamera" playsinline muted loop crossorigin="anonymous"></video>
+    <!-- Debug visible video elements to see if the browser is actually playing/decoding them (visible only in Developer Mode) -->
+    <div id="video-container" class="debug-video-container">
+        <video id="video-ecamera" playsinline muted loop crossorigin="anonymous" style="width: 160px; height: 90px; object-fit: cover; background: #000; border: 1px solid #555;"></video>
+        <video id="video-dcamera" playsinline muted loop crossorigin="anonymous" style="width: 160px; height: 90px; object-fit: cover; background: #000; border: 1px solid #555;"></video>
+        <video id="video-fcamera" playsinline muted loop crossorigin="anonymous" style="width: 160px; height: 90px; object-fit: cover; background: #000; border: 1px solid #555;"></video>
         <audio id="audio-track" loop crossorigin="anonymous"></audio>
     </div>
 
@@ -316,6 +316,16 @@
                                 <span id="proj-radius-value">10.0m</span>
                             </div>
                             <input type="range" id="proj-radius" min="5" max="30" step="0.5" value="10">
+                        </div>
+                        <div class="control-group" style="margin-top: 15px; margin-bottom: 5px;">
+                            <div class="slider-header">
+                                <span>HEVC Muxing Mode</span>
+                            </div>
+                            <select id="dev-muxing-mode" class="select-dropdown">
+                                <option value="auto" selected>Auto (Fallback)</option>
+                                <option value="force-local">Force Local Muxing</option>
+                                <option value="force-remote">Force Remote Muxing</option>
+                            </select>
                         </div>
                         <div class="control-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px;">
                             <button id="reset-calibration" class="btn btn-secondary btn-full" style="margin-top: 0; padding: 10px 5px; font-size: 0.85rem;">

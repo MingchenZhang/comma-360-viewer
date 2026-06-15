@@ -727,7 +727,16 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
 
 def run():
     global PORT, WORKSPACE
-    
+    class SilentThreadingHTTPServer(ThreadingHTTPServer):
+        def handle_error(self, request, client_address):
+            # Silence BrokenPipeError and ConnectionResetError (expected client disconnections during media streaming)
+            import sys
+            exctype, value = sys.exc_info()[:2]
+            if exctype in (BrokenPipeError, ConnectionResetError) or (value and 'Broken pipe' in str(value)):
+                pass
+            else:
+                super().handle_error(request, client_address)
+
     parser = argparse.ArgumentParser(
         description="Multi-threaded Comma.ai 360° Panorama Viewer Server. "
                     "Extracts audio tracks on-the-fly and transmuxes video segments in memory."
@@ -753,8 +762,8 @@ def run():
     os.chdir(WORKSPACE)
     load_schemas()
     server_address = ('', PORT)
-    # Use ThreadingHTTPServer to handle requests concurrently
-    httpd = ThreadingHTTPServer(server_address, CommaVidRequestHandler)
+    # Use SilentThreadingHTTPServer to handle requests concurrently
+    httpd = SilentThreadingHTTPServer(server_address, CommaVidRequestHandler)
     print(f"Starting custom multi-threaded comma-vid-viewer server on port {PORT}...")
     print(f"Serving workspace: {WORKSPACE}")
     try:

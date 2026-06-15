@@ -50,7 +50,10 @@ const state = {
         narrowFlipX: -1.0,
 
         // Developer Mode flag
-        devMode: false
+        devMode: false,
+        
+        // HEVC Muxing Mode ('auto', 'force-local', 'force-remote')
+        muxingMode: localStorage.getItem('comma_360_muxing_mode') || 'auto'
     },
     cameras: {
         ecamera: { el: null, texture: null, loaded: false, jmuxer: null },
@@ -75,6 +78,16 @@ let isTelemetryVisible = false;
 
 // Initialize App
 async function initApp() {
+    // Check and log browser H.265 MSE support status
+    const supportsHevcMse = window.MediaSource && (
+        MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L93.B0"') ||
+        MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"') ||
+        MediaSource.isTypeSupported('video/mp4; codecs="hvc1"') ||
+        MediaSource.isTypeSupported('video/mp4; codecs="hev1"')
+    );
+    console.log(`%c[System] Browser H.265 (HEVC) Media Source Extensions (MSE) support: ${supportsHevcMse ? "ENABLED/SUPPORTED" : "DISABLED/UNSUPPORTED"}`, 
+                supportsHevcMse ? "color: #34c759; font-weight: bold; font-size: 1.1em;" : "color: #ff9500; font-weight: bold; font-size: 1.1em;");
+
     // Load persisted calibration parameters
     loadCalibrationFromStorage();
 
@@ -97,6 +110,16 @@ async function initApp() {
 
     // 5. Start Loop
     animate();
+
+    // Diagnostics: log video status periodically to check if browser is decoding
+    setInterval(() => {
+        Object.keys(state.cameras).forEach(key => {
+            const video = state.cameras[key].el;
+            if (video) {
+                console.log(`[Status ${key}] readyState: ${video.readyState}, currentTime: ${video.currentTime.toFixed(3)}, paused: ${video.paused}, error: ${video.error ? video.error.code + ' (' + video.error.message + ')' : 'none'}`);
+            }
+        });
+    }, 2000);
 }
 
 if (document.readyState === 'loading') {
@@ -219,23 +242,127 @@ function setupVideos() {
     }
 }
 
-// Fetch raw HEVC stream and feed it into the camera's jmuxer
+// Fetch raw HEVC stream and feed it into the camera's jmuxer using a NAL-aligned streaming fetch
 async function loadHevcCamera(key, url) {
     try {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP status ${res.status}`);
-        const arrayBuffer = await res.arrayBuffer();
         
-        // Ensure jmuxer still exists (hasn't been destroyed by route change during download)
-        const jmuxer = state.cameras[key].jmuxer;
-        if (jmuxer) {
-            jmuxer.feed({
-                video: new Uint8Array(arrayBuffer)
-            });
-            console.log(`[JMuxer ${key}] Successfully fed raw HEVC stream of ${arrayBuffer.byteLength} bytes`);
+        const reader = res.body.getReader();
+        let firstChunk = true;
+        let accumulator = new Uint8Array(0);
+        
+        console.log(`[JMuxer ${key}] Starting streaming fetch from ${url}`);
+        
+        function appendBuffer(buffer1, buffer2) {
+            const tmp = new Uint8Array(buffer1.byteLength + buffer2.byteLength);
+            tmp.set(buffer1, 0);
+            tmp.set(buffer2, buffer1.byteLength);
+            return tmp;
+        }
+        
+        function findLastStartCode(arr) {
+            let i = arr.length - 3;
+            while (i >= 0) {
+                if (arr[i] === 0 && arr[i+1] === 0 && arr[i+2] === 1) {
+                    if (i > 0 && arr[i-1] === 0) {
+                        return i - 1;
+                    }
+                    return i;
+                }
+                i--;
+            }
+            return -1;
+        }
+        
+        const TARGET_BUFFER = 5; // seconds
+        while (true) {
+            // Check if user has switched routes or destroyed the jmuxer in the meantime
+            if (!state.cameras[key].jmuxer) {
+                console.log(`[JMuxer ${key}] Streaming aborted: player destroyed`);
+                break;
+            }
+            
+            // Backpressure / Pacing: avoid overwhelming the MSE buffer and browser decoder
+            const video = state.cameras[key].el;
+            if (video && !firstChunk) {
+                let forwardBuffer = 0;
+                const time = video.currentTime;
+                if (video.buffered && video.buffered.length > 0) {
+                    for (let i = 0; i < video.buffered.length; i++) {
+                        const start = video.buffered.start(i);
+                        const end = video.buffered.end(i);
+                        // Add 0.5s tolerance to handle tiny gaps/stutters robustly
+                        if (time >= start - 0.5 && time <= end) {
+                            forwardBuffer = end - time;
+                            break;
+                        }
+                    }
+                }
+                if (forwardBuffer >= TARGET_BUFFER) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    continue;
+                }
+            }
+            
+            const { done, value } = await reader.read();
+            
+            if (done) {
+                if (accumulator.length > 0) {
+                    state.cameras[key].jmuxer.feed({
+                        video: accumulator
+                    });
+                }
+                // Force flush any remaining buffered frames immediately
+                try {
+                    if (state.cameras[key].jmuxer) {
+                        state.cameras[key].jmuxer.remuxController.flush();
+                        state.cameras[key].jmuxer.applyAndClearBuffer();
+                    }
+                } catch (e) {
+                    console.warn(`[JMuxer ${key}] Error flushing final buffer:`, e);
+                }
+                console.log(`[JMuxer ${key}] Streaming finished`);
+                break;
+            }
+            
+            accumulator = appendBuffer(accumulator, value);
+            
+            const lastStartCodeIdx = findLastStartCode(accumulator);
+            if (lastStartCodeIdx > 0) {
+                // Slice off complete NAL units
+                const feedData = accumulator.subarray(0, lastStartCodeIdx);
+                accumulator = accumulator.subarray(lastStartCodeIdx);
+                
+                state.cameras[key].jmuxer.feed({
+                    video: feedData
+                });
+                
+                if (firstChunk) {
+                    firstChunk = false;
+                    // Force flush the first chunk immediately to avoid start delay
+                    try {
+                        state.cameras[key].jmuxer.remuxController.flush();
+                        state.cameras[key].jmuxer.applyAndClearBuffer();
+                    } catch (e) {}
+                    
+                    console.log(`[JMuxer ${key}] Received first chunk. Marking camera as loaded.`);
+                    state.cameras[key].loaded = true;
+                    
+                    // For the front camera, initialize playback duration and update UI
+                    if (key === 'ecamera') {
+                        state.playback.duration = 60.0;
+                        const timeline = document.getElementById('timeline-slider');
+                        if (timeline) timeline.max = 60.0;
+                        const durationText = document.getElementById('time-duration');
+                        if (durationText) durationText.textContent = formatTime(60.0);
+                    }
+                    checkAllLoaded();
+                }
+            }
         }
     } catch (e) {
-        console.error(`[JMuxer ${key}] Failed to load HEVC from ${url}:`, e);
+        console.error(`[JMuxer ${key}] Streaming failed:`, e);
         // Trigger video element error event to show standard error overlay
         const video = state.cameras[key].el;
         if (video) {
@@ -270,22 +397,95 @@ function loadCameraFeed(key, routeName, routeObj) {
 
     const hasHevc = routeObj ? (routeObj['has_' + key + '_hevc'] === true) : false;
 
-    if (hasHevc) {
+    // Check if the browser actually supports HEVC in MediaSource
+    const supportsHevcMse = window.MediaSource && (
+        MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L93.B0"') ||
+        MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L93.B0"') ||
+        MediaSource.isTypeSupported('video/mp4; codecs="hvc1"') ||
+        MediaSource.isTypeSupported('video/mp4; codecs="hev1"')
+    );
+
+    const muxMode = state.calibration.muxingMode || 'auto';
+    let useLocalMuxing = false;
+    if (muxMode === 'force-local') {
+        useLocalMuxing = hasHevc; // Always attempt local HEVC muxing if HEVC files exist on the server
+    } else if (muxMode === 'force-remote') {
+        useLocalMuxing = false; // Always use remote MP4 fallback directly
+    } else {
+        useLocalMuxing = hasHevc && supportsHevcMse; // Auto-fallback behavior
+    }
+
+    console.log(`[Camera ${key}] hasHevc: ${hasHevc}, supportsHevcMse: ${supportsHevcMse}, muxMode: ${muxMode} -> useLocalMuxing: ${useLocalMuxing}`);
+
+    if (useLocalMuxing) {
         console.log(`[Camera ${key}] Initializing browser-side JMuxer for raw HEVC stream`);
         
+        if (key === 'ecamera') {
+            if (muxMode === 'force-local') {
+                updateVideoSourceLabelText('raw HEVC (Forced Local)', '#ff9500');
+            } else {
+                updateVideoSourceLabelText('raw HEVC (JMuxer)', '#ff9500');
+            }
+        }
+
         state.cameras[key].jmuxer = new JMuxer({
             node: video,
             mode: 'video',
             videoCodec: 'H265',
-            flushingTime: 0,
+            flushingTime: 1000,
             fps: 20,
-            debug: false
+            debug: true // Enable debug to see any warnings/errors from JMuxer
         });
 
         const url = `${routeName}/${key}.hevc`;
         loadHevcCamera(key, url);
+
+        // Fallback detection: if browser fails to transition readyState from 0 after a timeout, fallback to MP4
+        setTimeout(() => {
+            if (state.cameras[key].jmuxer) {
+                const videoElement = state.cameras[key].el;
+                if (videoElement && videoElement.readyState === 0) {
+                    if (muxMode === 'force-local') {
+                        console.warn(`[Camera ${key}] HEVC MSE failed to transition readyState (stuck at HAVE_NOTHING). Fallback bypassed because local muxing is forced.`);
+                        return;
+                    }
+                    
+                    console.warn(`[Camera ${key}] HEVC MSE failed to transition readyState (stuck at HAVE_NOTHING). Falling back to native MP4.`);
+                    
+                    if (key === 'ecamera') {
+                        updateVideoSourceLabelText('HEVC MP4 (Server Fallback)', '#ff3b30');
+                    }
+
+                    try {
+                        state.cameras[key].jmuxer.destroy();
+                    } catch (e) {}
+                    state.cameras[key].jmuxer = null;
+                    
+                    videoElement.src = `${routeName}/${key}.mp4`;
+                    videoElement.load();
+                    if (state.playback.isPlaying) {
+                        videoElement.play().catch(() => {});
+                    }
+                }
+            }
+        }, 1500);
     } else {
-        console.log(`[Camera ${key}] Using native browser playback for MP4`);
+        if (hasHevc) {
+            console.log(`[Camera ${key}] HEVC MSE is not supported or bypassed by mode. Using remote transmuxed MP4.`);
+            if (key === 'ecamera') {
+                if (muxMode === 'force-remote') {
+                    updateVideoSourceLabelText('HEVC MP4 (Forced Remote)', '#34c759');
+                } else {
+                    updateVideoSourceLabelText('HEVC MP4 (Native Fallback)', '#34c759');
+                }
+            }
+        } else {
+            console.log(`[Camera ${key}] Using native browser playback for MP4`);
+            if (key === 'ecamera') {
+                const typeText = (routeObj && routeObj.type === 'h264 mp4') ? 'H.264 MP4 (Native)' : 'MP4 (Native)';
+                updateVideoSourceLabelText(typeText, '#00f0ff');
+            }
+        }
         video.src = `${routeName}/${key}.mp4`;
         video.load();
     }
@@ -300,9 +500,17 @@ function checkAllLoaded() {
             setTimeout(() => overlay.style.display = 'none', 500);
         }
         
+        console.log("[Playback] All feeds marked loaded. Current video states:");
+        Object.keys(state.cameras).forEach(key => {
+            const video = state.cameras[key].el;
+            if (video) {
+                console.log(` - ${key}: readyState=${video.readyState}, currentTime=${video.currentTime.toFixed(3)}, paused=${video.paused}, error=${video.error ? video.error.code : 'none'}`);
+            }
+        });
+        
         // Seek to the selected playback time once loaded
         if (state.playback.currentTime > 0) {
-            console.log(`[Playback] All feeds loaded. Restoring time to: ${state.playback.currentTime}s`);
+            console.log(`[Playback] Restoring time to: ${state.playback.currentTime}s`);
             syncTimeTo(state.playback.currentTime);
         }
     }
@@ -1569,6 +1777,29 @@ function setupUIListeners() {
             fallbackCopy(text);
         }
     });
+
+    // HEVC Muxing Mode Selector
+    const muxingSelector = document.getElementById('dev-muxing-mode');
+    if (muxingSelector) {
+        muxingSelector.value = state.calibration.muxingMode;
+        muxingSelector.addEventListener('change', (e) => {
+            const val = e.target.value;
+            state.calibration.muxingMode = val;
+            localStorage.setItem('comma_360_muxing_mode', val);
+            
+            console.log(`HEVC Muxing Mode changed to: ${val}`);
+            
+            // Reload active feeds at current playback time
+            const activeRoute = document.getElementById('route-selector').value;
+            if (activeRoute) {
+                const currentTime = state.playback.currentTime;
+                loadRoute(activeRoute);
+                if (currentTime > 0) {
+                    state.playback.currentTime = currentTime;
+                }
+            }
+        });
+    }
 }
 
 function toggleDevPanel() {
@@ -1581,6 +1812,16 @@ function toggleDevPanel() {
         // Update dev guide lines visibility
         if (horizonLine) horizonLine.visible = state.calibration.devMode;
         if (verticalLine) verticalLine.visible = state.calibration.devMode;
+
+        // Update debug video container visibility
+        const videoContainer = document.getElementById('video-container');
+        if (videoContainer) {
+            if (isHidden) {
+                videoContainer.classList.add('active');
+            } else {
+                videoContainer.classList.remove('active');
+            }
+        }
 
         // If disabling dev mode, force overlap mode to reset to front priority
         if (!isHidden && combinedMaterial) {
@@ -1997,23 +2238,29 @@ async function initRouteSelector() {
     state.routesList = routes.map(route => {
         if (typeof route === 'object' && route !== null) {
             return {
-                name: route.name,
-                type: route.type || 'h264 mp4',
-                start_time: route.start_time || '',
-                has_ecamera: route.has_ecamera !== undefined ? route.has_ecamera : true,
-                has_dcamera: route.has_dcamera !== undefined ? route.has_dcamera : true,
-                has_fcamera: route.has_fcamera !== undefined ? route.has_fcamera : true
+                type: 'h264 mp4',
+                start_time: '',
+                has_ecamera: true,
+                has_dcamera: true,
+                has_fcamera: true,
+                has_ecamera_hevc: false,
+                has_dcamera_hevc: false,
+                has_fcamera_hevc: false,
+                ...route
             };
         }
         let type = 'h264 mp4';
-        if (route === '00000026--93a24779ed--5') type = 'hevc mp4';
-        if (route === '00000026--93a24779ed--6') type = 'hevc mp4';
+        const isHevcRoute = route.includes('00000026--93a24779ed');
+        if (isHevcRoute) type = 'raw hevc stream';
         return {
             name: route,
             type: type,
             has_ecamera: true,
             has_dcamera: true,
-            has_fcamera: true
+            has_fcamera: true,
+            has_ecamera_hevc: isHevcRoute,
+            has_dcamera_hevc: isHevcRoute,
+            has_fcamera_hevc: isHevcRoute
         };
     });
 
@@ -2090,26 +2337,30 @@ async function initRouteSelector() {
     });
 }
 
-// Update the video source description label in UI
-function updateVideoSourceLabel(routeName) {
+// Update the video source description label in UI with a text and color
+function updateVideoSourceLabelText(text, color) {
     const labelEl = document.getElementById('metric-video-source');
-    if (!labelEl) return;
+    if (labelEl) {
+        labelEl.textContent = text;
+        if (color) labelEl.style.color = color;
+    }
+}
 
+// Update the video source description label in UI based on initial route selection
+function updateVideoSourceLabel(routeName) {
     const route = state.routesList?.find(r => r.name === routeName);
     if (route) {
-        labelEl.textContent = route.type;
-        
-        // Color code for a premium look
         if (route.type === 'h264 mp4') {
-            labelEl.style.color = '#34c759'; // Neon green
+            updateVideoSourceLabelText('H.264 MP4 (Native)', '#00f0ff');
         } else if (route.type === 'hevc mp4') {
-            labelEl.style.color = '#00f0ff'; // Neon cyan
+            updateVideoSourceLabelText('HEVC MP4 (Native)', '#34c759');
         } else if (route.type === 'raw hevc stream') {
-            labelEl.style.color = '#ffcc00'; // Neon yellow
+            updateVideoSourceLabelText('raw HEVC (detecting...)', '#ffcc00');
+        } else {
+            updateVideoSourceLabelText(route.type, 'var(--text-secondary)');
         }
     } else {
-        labelEl.textContent = 'unknown';
-        labelEl.style.color = 'var(--text-muted)';
+        updateVideoSourceLabelText('unknown', 'var(--text-muted)');
     }
 }
 
