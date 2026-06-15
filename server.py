@@ -79,6 +79,7 @@ telemetry_lock = threading.Lock()
 PORT = 8080
 STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE = STATIC_DIR
+CACHE_DIR = os.path.join(STATIC_DIR, ".cache")
 
 def load_schemas():
     global log_capnp
@@ -115,7 +116,47 @@ def cache_mp4_data(key, data):
             print(f"[Memory Cache] Evicted: {oldest_key}")
         mp4_cache[key] = data
 
+def get_cache_path(filepath):
+    # Map the requested file path (relative to WORKSPACE) to a path under CACHE_DIR
+    rel_path = os.path.relpath(filepath, WORKSPACE)
+    if rel_path.startswith("..") or os.path.isabs(rel_path):
+        import hashlib
+        h = hashlib.md5(filepath.encode('utf-8')).hexdigest()
+        return os.path.join(CACHE_DIR, h)
+    return os.path.join(CACHE_DIR, rel_path)
+
+def save_cache_to_disk(filepath, data):
+    def save_worker():
+        try:
+            cache_path = get_cache_path(filepath)
+            dir_name = os.path.dirname(cache_path)
+            os.makedirs(dir_name, exist_ok=True)
+            
+            temp_fd, temp_path = tempfile.mkstemp(dir=dir_name)
+            try:
+                with os.fdopen(temp_fd, 'wb') as f:
+                    f.write(data)
+                os.replace(temp_path, cache_path)
+                print(f"[Disk Cache] Saved: {cache_path}")
+            except Exception as e:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                print(f"[Disk Cache] Error saving to disk: {e}")
+        except Exception as e:
+            print(f"[Disk Cache] Thread error: {e}")
+
+    threading.Thread(target=save_worker, daemon=True).start()
+
 class CommaVidRequestHandler(SimpleHTTPRequestHandler):
+    def serve_file_from_cache(self, cache_path, content_type):
+        try:
+            with open(cache_path, 'rb') as f:
+                data = f.read()
+            self.serve_bytes(data, content_type=content_type)
+        except Exception as e:
+            print(f"[Server] Error serving from cache: {e}")
+            self.send_error(500, "Error serving from cache")
+
     def translate_path(self, path):
         # Decode path
         parsed_url = urllib.parse.urlparse(path)
@@ -146,7 +187,10 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
             filepath = self.translate_path(self.path)
             has_cache_control = any(b'cache-control' in h.lower() for h in self._headers_buffer)
             if not has_cache_control:
-                if filepath.endswith(('.html', '.js', '.css', '.json')) or self.path in ['/', '/index.html', '/app.js', '/styles.css']:
+                # Permanently cache static vendor libraries in /js/ directory
+                if "/js/" in self.path or "/js/" in filepath:
+                    self.send_header('Cache-Control', 'public, max-age=31536000')
+                elif filepath.endswith(('.html', '.js', '.css', '.json')) or self.path in ['/', '/index.html', '/app.js', '/styles.css']:
                     self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
                     self.send_header('Pragma', 'no-cache')
                     self.send_header('Expires', '0')
@@ -173,6 +217,12 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
         
         # Intercept qcamera.m4a requests
         if filepath.endswith('qcamera.m4a') and not os.path.exists(filepath):
+            # Check disk cache first
+            cache_path = get_cache_path(filepath)
+            if os.path.exists(cache_path):
+                self.serve_file_from_cache(cache_path, 'audio/mp4')
+                return
+                
             ts_path = filepath.rsplit('qcamera.m4a', 1)[0] + 'qcamera.ts'
             if os.path.exists(ts_path):
                 data = self.get_cached_or_extract_audio(ts_path, filepath)
@@ -185,6 +235,12 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
         
         # Check if requested file is an .mp4 file that doesn't exist, but .hevc does
         if filepath.endswith('.mp4') and not os.path.exists(filepath):
+            # Check disk cache first
+            cache_path = get_cache_path(filepath)
+            if os.path.exists(cache_path):
+                self.serve_file_from_cache(cache_path, 'video/mp4')
+                return
+                
             hevc_path = filepath.rsplit('.mp4', 1)[0] + '.hevc'
             if os.path.exists(hevc_path):
                 # Fetch from cache or transmux in-memory
@@ -229,6 +285,7 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
                     data = res.stdout
                     print(f"[Memory Transmux] Completed (In-Memory Pipe): {hevc_path} ({len(data)} bytes)")
                     cache_mp4_data(mp4_path, data)
+                    save_cache_to_disk(mp4_path, data)
                     return data
                 else:
                     print(f"[Memory Transmux] Error: ffmpeg failed with code {res.returncode}")
@@ -306,7 +363,8 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
                     "-vn"
                 ]
                 if delay_ms > 0:
-                    cmd.extend(["-af", f"adelay={delay_ms}:all=1"])
+                    # Delay L and R channels using compatible syntax that works on older ffmpeg versions
+                    cmd.extend(["-af", f"adelay={delay_ms}|{delay_ms}"])
                 cmd.extend([
                     "-c:a", "aac"
                 ])
@@ -320,6 +378,7 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
                     data = res.stdout
                     print(f"[Audio Extract] Completed (In-Memory Pipe): {ts_path} ({len(data)} bytes)")
                     cache_mp4_data(m4a_path, data)
+                    save_cache_to_disk(m4a_path, data)
                     return data
                 else:
                     print(f"[Audio Extract] Error: ffmpeg failed with code {res.returncode}")
@@ -483,12 +542,26 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
             
         route_dir = os.path.join(WORKSPACE, route_name)
         qlog_path = os.path.join(route_dir, "qlog.zst")
+        telemetry_json_path = get_cache_path(os.path.join(route_dir, "telemetry.json"))
         
-        # Check cache
+        # 1. Check in-memory cache
         with telemetry_lock:
             if route_name in telemetry_cache:
                 self.serve_json(telemetry_cache[route_name])
                 return
+                
+        # 2. Check disk cache
+        if os.path.exists(telemetry_json_path):
+            try:
+                with open(telemetry_json_path, 'r', encoding='utf-8') as f:
+                    telemetry = json.load(f)
+                with telemetry_lock:
+                    telemetry_cache[route_name] = telemetry
+                print(f"[Telemetry] Loaded from disk cache: {telemetry_json_path}")
+                self.serve_json(telemetry)
+                return
+            except Exception as e:
+                print(f"[Telemetry] Error reading disk cache: {e}")
             
         if not os.path.exists(qlog_path):
             self.send_error(404, f"Telemetry log not found for route {route_name}")
@@ -600,6 +673,26 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
             print(f"[Telemetry] Extracted {len(telemetry)} points for {route_name}")
             with telemetry_lock:
                 telemetry_cache[route_name] = telemetry
+                
+            # Save telemetry to disk cache in background
+            def save_telemetry():
+                try:
+                    dir_name = os.path.dirname(telemetry_json_path)
+                    os.makedirs(dir_name, exist_ok=True)
+                    temp_fd, temp_path = tempfile.mkstemp(dir=dir_name)
+                    try:
+                        with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
+                            json.dump(telemetry, f, indent=2)
+                        os.replace(temp_path, telemetry_json_path)
+                        print(f"[Telemetry] Saved to disk cache: {telemetry_json_path}")
+                    except Exception as e:
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                        print(f"[Telemetry] Error saving telemetry to disk: {e}")
+                except Exception as e:
+                    print(f"[Telemetry] Thread error: {e}")
+            threading.Thread(target=save_telemetry, daemon=True).start()
+            
             self.serve_json(telemetry)
             
         except Exception as e:

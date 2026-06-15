@@ -14,3 +14,4 @@ routes.json
 # IDE / tooling
 .antigravitycli/
 .gemini/
+.cache/
