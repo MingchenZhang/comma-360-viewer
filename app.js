@@ -406,16 +406,21 @@ function loadCameraFeed(key, routeName, routeObj) {
     );
 
     const muxMode = state.calibration.muxingMode || 'auto';
+    
+    // Check if this browser environment has previously failed/fallen back on HEVC playback
+    const hasFailedBefore = localStorage.getItem('comma_360_hevc_failed_ua') === navigator.userAgent;
+
     let useLocalMuxing = false;
     if (muxMode === 'force-local') {
         useLocalMuxing = hasHevc; // Always attempt local HEVC muxing if HEVC files exist on the server
     } else if (muxMode === 'force-remote') {
         useLocalMuxing = false; // Always use remote MP4 fallback directly
     } else {
-        useLocalMuxing = hasHevc && supportsHevcMse; // Auto-fallback behavior
+        // Auto-fallback behavior: only use local muxing if supportsHevcMse is true AND this browser has not failed before
+        useLocalMuxing = hasHevc && supportsHevcMse && !hasFailedBefore;
     }
 
-    console.log(`[Camera ${key}] hasHevc: ${hasHevc}, supportsHevcMse: ${supportsHevcMse}, muxMode: ${muxMode} -> useLocalMuxing: ${useLocalMuxing}`);
+    console.log(`[Camera ${key}] hasHevc: ${hasHevc}, supportsHevcMse: ${supportsHevcMse}, muxMode: ${muxMode}, hasFailedBefore: ${hasFailedBefore} -> useLocalMuxing: ${useLocalMuxing}`);
 
     if (useLocalMuxing) {
         console.log(`[Camera ${key}] Initializing browser-side JMuxer for raw HEVC stream`);
@@ -451,6 +456,9 @@ function loadCameraFeed(key, routeName, routeObj) {
                     }
                     
                     console.warn(`[Camera ${key}] HEVC MSE failed to transition readyState (stuck at HAVE_NOTHING). Falling back to native MP4.`);
+                    
+                    // Save the user agent string as the fallback version identifier to skip future attempts on this browser config
+                    localStorage.setItem('comma_360_hevc_failed_ua', navigator.userAgent);
                     
                     if (key === 'ecamera') {
                         updateVideoSourceLabelText('HEVC MP4 (Server Fallback)', '#ff3b30');
@@ -1786,6 +1794,12 @@ function setupUIListeners() {
             const val = e.target.value;
             state.calibration.muxingMode = val;
             localStorage.setItem('comma_360_muxing_mode', val);
+            
+            // If the user manually changes the mode to Auto or Force Local,
+            // clear any saved failure flags to allow fresh HEVC MSE attempts
+            if (val === 'auto' || val === 'force-local') {
+                localStorage.removeItem('comma_360_hevc_failed_ua');
+            }
             
             console.log(`HEVC Muxing Mode changed to: ${val}`);
             
