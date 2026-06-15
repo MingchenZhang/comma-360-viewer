@@ -354,21 +354,27 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
             except ValueError:
                 pass
                 
-        self.send_response(status)
-        self.send_header('Content-Type', content_type)
-        self.send_header('Accept-Ranges', 'bytes')
-        self.send_header('Cache-Control', 'no-cache')
-        
-        if is_range_request:
-            content_length = end - start + 1
-            self.send_header('Content-Length', str(content_length))
-            self.send_header('Content-Range', f'bytes {start}-{end}/{len(data)}')
-            self.end_headers()
-            self.wfile.write(data[start:end+1])
-        else:
-            self.send_header('Content-Length', str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header('Cache-Control', 'no-cache')
+            
+            if is_range_request:
+                content_length = end - start + 1
+                self.send_header('Content-Length', str(content_length))
+                self.send_header('Content-Range', f'bytes {start}-{end}/{len(data)}')
+                self.end_headers()
+                self.wfile.write(data[start:end+1])
+            else:
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError) as e:
+            # Silence expected client disconnection errors
+            pass
+        except Exception as e:
+            print(f"[Server] Unexpected error sending response: {e}")
 
     def send_routes_json(self):
         # Find all route subdirectories in WORKSPACE (and WORKSPACE/realdata if it exists)
