@@ -105,7 +105,7 @@ if (document.readyState === 'loading') {
     initApp();
 }
 
-// Setup Video Elements (ecamera and dcamera only)
+// Setup Video Elements
 function setupVideos() {
     const ids = ['video-ecamera', 'video-dcamera', 'video-fcamera'];
     
@@ -139,6 +139,13 @@ function setupVideos() {
 
         // Error handling
         video.addEventListener('error', (e) => {
+            const activeRoute = document.getElementById('route-selector')?.value;
+            const routeObj = state.routesList?.find(r => r.name === activeRoute);
+            const isAvailable = routeObj ? (routeObj['has_' + key] !== false) : true;
+            if (!isAvailable) {
+                return; // Ignore error for missing/unavailable camera
+            }
+
             console.error(`Error loading video ${key}:`, e);
             const overlay = document.getElementById('loading-overlay');
             if (overlay) {
@@ -161,9 +168,18 @@ function setupVideos() {
             }
         });
 
-        // Trigger load
-        video.load();
+        // Trigger load if camera is available
+        const activeRoute = document.getElementById('route-selector')?.value;
+        const routeObj = state.routesList?.find(r => r.name === activeRoute);
+        const isAvailable = routeObj ? (routeObj['has_' + key] !== false) : true;
+        if (isAvailable) {
+            video.load();
+        } else {
+            state.cameras[key].loaded = true;
+            video.src = "";
+        }
     });
+
 
     // Setup Audio Track Element
     const audio = document.getElementById('audio-track');
@@ -1915,12 +1931,25 @@ async function initRouteSelector() {
     // Normalize routes to an array of objects to handle both flat string arrays (cached) and objects
     state.routesList = routes.map(route => {
         if (typeof route === 'object' && route !== null) {
-            return route;
+            return {
+                name: route.name,
+                type: route.type || 'h264 mp4',
+                start_time: route.start_time || '',
+                has_ecamera: route.has_ecamera !== undefined ? route.has_ecamera : true,
+                has_dcamera: route.has_dcamera !== undefined ? route.has_dcamera : true,
+                has_fcamera: route.has_fcamera !== undefined ? route.has_fcamera : true
+            };
         }
         let type = 'h264 mp4';
         if (route === '00000026--93a24779ed--5') type = 'hevc mp4';
         if (route === '00000026--93a24779ed--6') type = 'hevc mp4';
-        return { name: route, type: type };
+        return {
+            name: route,
+            type: type,
+            has_ecamera: true,
+            has_dcamera: true,
+            has_fcamera: true
+        };
     });
 
     // Populate dropdown
@@ -1984,10 +2013,16 @@ async function initRouteSelector() {
         dcamera: 'dcamera.mp4',
         fcamera: 'fcamera.mp4'
     };
+    const activeRouteObj = state.routesList.find(r => r.name === activeRoute);
     Object.keys(camFiles).forEach(key => {
         const video = document.getElementById(`video-${key}`);
         if (video) {
-            video.src = `${activeRoute}/${camFiles[key]}`;
+            const isAvailable = activeRouteObj ? (activeRouteObj['has_' + key] !== false) : true;
+            if (isAvailable) {
+                video.src = `${activeRoute}/${camFiles[key]}`;
+            } else {
+                video.removeAttribute('src');
+            }
         }
     });
 
@@ -1997,6 +2032,7 @@ async function initRouteSelector() {
     }
 
     updateVideoSourceLabel(activeRoute);
+    updateCameraTogglesUI(activeRouteObj);
 
     // Initial telemetry fetch
     fetchTelemetry(activeRoute);
@@ -2030,6 +2066,39 @@ function updateVideoSourceLabel(routeName) {
     }
 }
 
+// Disable/uncheck camera toggles if camera feeds are not present in the route
+function updateCameraTogglesUI(routeObj) {
+    const driverToggle = document.getElementById('driver-cam-toggle');
+    const narrowToggle = document.getElementById('narrow-cam-toggle');
+    
+    const hasDCamera = routeObj ? (routeObj.has_dcamera !== false) : true;
+    const hasFCamera = routeObj ? (routeObj.has_fcamera !== false) : true;
+    
+    if (driverToggle) {
+        const row = driverToggle.closest('.control-group-row');
+        if (hasDCamera) {
+            driverToggle.disabled = false;
+            if (row) row.classList.remove('disabled');
+        } else {
+            driverToggle.checked = false;
+            driverToggle.disabled = true;
+            if (row) row.classList.add('disabled');
+        }
+    }
+    
+    if (narrowToggle) {
+        const row = narrowToggle.closest('.control-group-row');
+        if (hasFCamera) {
+            narrowToggle.disabled = false;
+            if (row) row.classList.remove('disabled');
+        } else {
+            narrowToggle.checked = false;
+            narrowToggle.disabled = true;
+            if (row) row.classList.add('disabled');
+        }
+    }
+}
+
 // Switches the active route, resets state, and reloads video streams
 function loadRoute(routeName) {
     console.log(`Switching route to: ${routeName}`);
@@ -2058,6 +2127,9 @@ function loadRoute(routeName) {
         state.cameras[k].loaded = false;
     });
 
+    const activeRouteObj = state.routesList.find(r => r.name === routeName);
+    updateCameraTogglesUI(activeRouteObj);
+
     const camFiles = {
         ecamera: 'ecamera.mp4',
         dcamera: 'dcamera.mp4',
@@ -2067,8 +2139,14 @@ function loadRoute(routeName) {
     Object.keys(camFiles).forEach(key => {
         const video = state.cameras[key].el;
         if (video) {
-            video.src = `${routeName}/${camFiles[key]}`;
-            video.load();
+            const isAvailable = activeRouteObj ? (activeRouteObj['has_' + key] !== false) : true;
+            if (isAvailable) {
+                video.src = `${routeName}/${camFiles[key]}`;
+                video.load();
+            } else {
+                video.src = "";
+                state.cameras[key].loaded = true;
+            }
         }
     });
 
@@ -2077,6 +2155,9 @@ function loadRoute(routeName) {
         audio.src = `${routeName}/qcamera.m4a`;
         audio.load();
     }
+
+    // Check if loading spinner can be dismissed
+    checkAllLoaded();
 
     // Reset timeline slider and playback current time
     state.playback.currentTime = 0;

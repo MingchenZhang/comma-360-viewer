@@ -479,10 +479,18 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
                     start_time = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
                     break
                     
+            # Check which cameras exist in the route directory
+            has_ecamera = os.path.exists(os.path.join(route_dir, "ecamera.hevc")) or os.path.exists(os.path.join(route_dir, "ecamera.mp4"))
+            has_dcamera = os.path.exists(os.path.join(route_dir, "dcamera.hevc")) or os.path.exists(os.path.join(route_dir, "dcamera.mp4"))
+            has_fcamera = os.path.exists(os.path.join(route_dir, "fcamera.hevc")) or os.path.exists(os.path.join(route_dir, "fcamera.mp4"))
+                    
             routes_data.append({
                 "name": s,
                 "type": rtype,
-                "start_time": start_time
+                "start_time": start_time,
+                "has_ecamera": has_ecamera,
+                "has_dcamera": has_dcamera,
+                "has_fcamera": has_fcamera
             })
             
         json_bytes = json.dumps(routes_data, indent=2).encode('utf-8')
