@@ -204,10 +204,12 @@ function setupVideos() {
         audio.loop = true;
         
         audio.addEventListener('loadedmetadata', () => {
-            console.log("[Audio] Track metadata loaded successfully. Showing mute button.");
+            console.log("[Audio] Track metadata loaded successfully. Enabling mute button.");
             const btnMute = document.getElementById('btn-mute');
             if (btnMute) {
-                btnMute.style.display = 'flex';
+                btnMute.classList.remove('disabled');
+                btnMute.disabled = false;
+                btnMute.title = "Mute / Unmute Audio (M)";
             }
             
             // Sync button UI to current muted state
@@ -231,10 +233,12 @@ function setupVideos() {
         });
         
         audio.addEventListener('error', () => {
-            console.log("[Audio] Track load failed or not present. Hiding mute button.");
+            console.log("[Audio] Track load failed or not present. Graying out mute button.");
             const btnMute = document.getElementById('btn-mute');
             if (btnMute) {
-                btnMute.style.display = 'none';
+                btnMute.classList.add('disabled');
+                btnMute.disabled = true;
+                btnMute.title = "No audio track available";
             }
         });
         
@@ -1175,7 +1179,7 @@ function syncTimeTo(seconds) {
     // Force seek on audio if present and ready
     const audio = document.getElementById('audio-track');
     const btnMute = document.getElementById('btn-mute');
-    const hasAudio = btnMute && btnMute.style.display !== 'none';
+    const hasAudio = btnMute && !btnMute.disabled;
     if (hasAudio && audio && audio.readyState >= 1 && !isNaN(audio.duration)) {
         try { audio.currentTime = seconds; } catch (e) { console.warn("Failed to seek audio:", e); }
     }
@@ -1216,7 +1220,7 @@ function runSyncDiagnostics() {
     // Sync audio to master time
     const audio = document.getElementById('audio-track');
     const btnMute = document.getElementById('btn-mute');
-    const hasAudio = btnMute && btnMute.style.display !== 'none';
+    const hasAudio = btnMute && !btnMute.disabled;
     if (hasAudio && audio && !isNaN(audio.duration)) {
         const drift = audio.currentTime - masterTime;
         if (Math.abs(drift) > 0.15) {

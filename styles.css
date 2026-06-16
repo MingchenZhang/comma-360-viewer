@@ -1526,3 +1526,11 @@ body.is-fullscreen .app-layout {
     overflow: hidden !important;
 }
 
+/* Disabled buttons styling */
+button:disabled, button.disabled {
+    opacity: 0.35 !important;
+    pointer-events: none !important;
+    cursor: not-allowed !important;
+    transform: none !important;
+}
+
