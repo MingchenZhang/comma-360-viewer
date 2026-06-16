@@ -118,6 +118,80 @@ def cache_mp4_data(key, data):
             print(f"[Memory Cache] Evicted: {oldest_key}")
         mp4_cache[key] = data
 
+disk_cache_lock = threading.Lock()
+
+def clean_cache_if_needed():
+    with disk_cache_lock:
+        limit_cache_bytes = 2 * 1024 * 1024 * 1024  # 2 GiB
+        limit_disk_bytes = 5 * 1024 * 1024 * 1024   # 5 GiB
+        
+        while True:
+            # 1. Calculate current cache size
+            cache_size = 0
+            if os.path.exists(CACHE_DIR):
+                for root, dirs, files in os.walk(CACHE_DIR):
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        try:
+                            if not os.path.islink(fp):
+                                cache_size += os.path.getsize(fp)
+                        except Exception:
+                            pass
+            
+            # 2. Check remaining disk space
+            try:
+                check_dir = CACHE_DIR if os.path.exists(CACHE_DIR) else WORKSPACE
+                free_space = shutil.disk_usage(check_dir).free
+            except Exception as e:
+                print(f"[Disk Cache] Error checking disk usage: {e}")
+                break
+            
+            # 3. Find all candidate route directories under CACHE_DIR to delete
+            route_dirs = []
+            if os.path.exists(CACHE_DIR):
+                for root, dirs, files in os.walk(CACHE_DIR):
+                    if files:
+                        route_dirs.append(root)
+            
+            # 4. Check if cache file deletion is needed and possible
+            needs_cleaning = (cache_size > limit_cache_bytes) or (free_space < limit_disk_bytes)
+            if not needs_cleaning or not route_dirs:
+                break
+            
+            # 5. Find the oldest route in the cache
+            def get_route_mtime(route_dir):
+                try:
+                    files = [os.path.join(route_dir, f) for f in os.listdir(route_dir) if os.path.isfile(os.path.join(route_dir, f))]
+                    if files:
+                        return max(os.path.getmtime(f) for f in files)
+                except Exception:
+                    pass
+                try:
+                    return os.path.getmtime(route_dir)
+                except Exception:
+                    return 0
+
+            # Sort route_dirs by modification time ascending (oldest first)
+            route_dirs.sort(key=get_route_mtime)
+            oldest_route = route_dirs[0]
+            
+            # 6. Remove the oldest route
+            try:
+                print(f"[Disk Cache] Cache size: {cache_size / (1024**3):.2f} GiB, Free disk: {free_space / (1024**3):.2f} GiB. Evicting oldest route: {oldest_route}")
+                shutil.rmtree(oldest_route)
+                
+                # Also clean up empty parent directories up to CACHE_DIR
+                parent = os.path.dirname(oldest_route)
+                while parent != CACHE_DIR and len(parent) > len(CACHE_DIR):
+                    if os.path.exists(parent) and os.path.isdir(parent) and not os.listdir(parent):
+                        os.rmdir(parent)
+                        parent = os.path.dirname(parent)
+                    else:
+                        break
+            except Exception as e:
+                print(f"[Disk Cache] Error evicting route {oldest_route}: {e}")
+                break
+
 def get_cache_path(filepath):
     # Map the requested file path (relative to WORKSPACE) to a path under CACHE_DIR
     rel_path = os.path.relpath(filepath, WORKSPACE)
@@ -130,6 +204,8 @@ def get_cache_path(filepath):
 def save_cache_to_disk(filepath, data):
     def save_worker():
         try:
+            clean_cache_if_needed()
+            
             cache_path = get_cache_path(filepath)
             dir_name = os.path.dirname(cache_path)
             os.makedirs(dir_name, exist_ok=True)
@@ -144,6 +220,8 @@ def save_cache_to_disk(filepath, data):
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
                 print(f"[Disk Cache] Error saving to disk: {e}")
+            except Exception as e:
+                print(f"[Disk Cache] Thread error: {e}")
         except Exception as e:
             print(f"[Disk Cache] Thread error: {e}")
 
