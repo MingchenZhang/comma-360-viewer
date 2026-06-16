@@ -2318,9 +2318,10 @@ async function initRouteSelector() {
         if (route.name.includes('--')) {
             const cleanName = route.name.includes('/') ? route.name.split('/').pop() : route.name;
             const parts = cleanName.split('--');
+            const routeId = parts.length >= 3 ? parts[1] : parts[0];
             const segmentId = parts[parts.length - 1];
             const dt = route.start_time || 'unknown';
-            displayName = `${dt}-${segmentId}`;
+            displayName = `${dt}-${routeId}-${segmentId}`;
         } else {
             const cleanName = route.name.includes('/') ? route.name.split('/').pop() : route.name;
             const dt = route.start_time || 'unknown';
