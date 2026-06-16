@@ -1126,6 +1126,24 @@ function toggleSidebar() {
     }
 }
 
+// Toggle fullscreen mode
+function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+        const layout = document.querySelector('.app-layout');
+        if (layout) {
+            layout.requestFullscreen().catch(err => {
+                console.error(`Error attempting to enable fullscreen: ${err.message}`);
+            });
+        } else {
+            document.documentElement.requestFullscreen().catch(err => {
+                console.error(`Error attempting to enable fullscreen: ${err.message}`);
+            });
+        }
+    } else {
+        document.exitFullscreen();
+    }
+}
+
 // Timeline seeking
 function syncTimeTo(seconds) {
     state.playback.currentTime = seconds;
@@ -1329,6 +1347,36 @@ function setupUIListeners() {
         });
     }
 
+    const btnFullscreen = document.getElementById('btn-fullscreen');
+    if (btnFullscreen) {
+        btnFullscreen.addEventListener('click', () => {
+            toggleFullscreen();
+        });
+    }
+
+    document.addEventListener('fullscreenchange', () => {
+        const icon = document.getElementById('fullscreen-icon');
+        const btn = document.getElementById('btn-fullscreen');
+        const isFullscreen = !!document.fullscreenElement;
+        
+        // Toggle helper class on body
+        if (isFullscreen) {
+            document.body.classList.add('is-fullscreen');
+        } else {
+            document.body.classList.remove('is-fullscreen');
+        }
+
+        if (icon) {
+            icon.setAttribute('data-lucide', isFullscreen ? 'minimize' : 'maximize');
+            if (window.lucide) {
+                window.lucide.createIcons();
+            }
+        }
+        if (btn) {
+            btn.title = isFullscreen ? 'Exit Fullscreen (F)' : 'Toggle Fullscreen (F)';
+        }
+    });
+
     // 3. Timeline Seeking
     const timeline = document.getElementById('timeline-slider');
     timeline.addEventListener('input', (e) => {
@@ -1419,6 +1467,12 @@ function setupUIListeners() {
         if (e.key === 'b' || e.key === 'B') {
             e.preventDefault();
             toggleSidebar();
+        }
+
+        // Toggle Fullscreen shortcut (F)
+        if (e.key === 'f' || e.key === 'F') {
+            e.preventDefault();
+            toggleFullscreen();
         }
         
         // Frame step backward shortcut (Left Arrow or Comma)

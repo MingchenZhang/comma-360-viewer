@@ -481,8 +481,10 @@ input[type="range"]::-webkit-slider-thumb:hover {
     display: flex;
     flex-direction: column;
     height: 100%;
+    max-height: 100%;
     background: #000;
     position: relative;
+    overflow: hidden;
 }
 
 /* Viewport */
@@ -755,6 +757,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
     justify-content: space-between;
     align-items: center;
     padding: 12px 24px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
 }
 
 /* Media Controls */
@@ -762,6 +765,20 @@ input[type="range"]::-webkit-slider-thumb:hover {
     display: flex;
     align-items: center;
     gap: 16px;
+    overflow-x: auto;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+}
+
+.media-controls::-webkit-scrollbar {
+    display: none; /* Safari/Chrome */
+}
+
+.media-controls > button,
+.media-controls > .btn-group {
+    flex-shrink: 0;
 }
 
 .btn-circle {
@@ -1454,5 +1471,58 @@ input[type="range"]::-webkit-slider-thumb:hover {
     width: auto;
     height: auto;
     overflow: visible;
+}
+
+/* Fullscreen layout fixes */
+:fullscreen, :-webkit-full-screen, :-moz-full-screen {
+    width: 100% !important;
+    height: 100% !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+}
+
+:fullscreen body, :-webkit-full-screen body, :-moz-full-screen body {
+    height: 100% !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+}
+
+:fullscreen .app-layout, :-webkit-full-screen .app-layout, :-moz-full-screen .app-layout {
+    display: flex !important;
+    flex-direction: row !important;
+    height: 100% !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    width: 100% !important;
+    overflow: hidden !important;
+}
+
+/* Fallback/Explicit styles for body class fullscreen (covers Android/Firefox positioning shift bugs) */
+body.is-fullscreen {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    z-index: 99999 !important;
+}
+
+body.is-fullscreen .app-layout {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    flex-direction: row !important;
+    overflow: hidden !important;
 }
 
