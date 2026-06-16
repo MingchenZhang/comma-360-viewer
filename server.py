@@ -563,6 +563,8 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
         subdirs = []
         try:
             for item in os.listdir(WORKSPACE):
+                if "car-fire" in item:
+                    continue
                 full_path = os.path.join(WORKSPACE, item)
                 if os.path.isdir(full_path) and not item.startswith("."):
                     # Check if it contains videos directly
@@ -572,6 +574,8 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
                     else:
                         try:
                             for subitem in os.listdir(full_path):
+                                if "car-fire" in subitem:
+                                    continue
                                 sub_full_path = os.path.join(full_path, subitem)
                                 if os.path.isdir(sub_full_path) and not subitem.startswith("."):
                                     if any(f.endswith(".hevc") or f.endswith(".mp4") for f in os.listdir(sub_full_path)):
@@ -581,12 +585,8 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"[Dynamic Routes] Error listing directory: {e}")
         
-        # Sort subdirs, putting car-fire at the front if present
+        # Sort subdirs alphabetically
         subdirs.sort()
-        car_fire_route = next((s for s in subdirs if "car-fire" in s), None)
-        if car_fire_route:
-            subdirs.remove(car_fire_route)
-            subdirs.insert(0, car_fire_route)
             
         routes_data = []
         for s in subdirs:
