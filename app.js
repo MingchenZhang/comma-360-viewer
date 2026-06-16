@@ -2474,6 +2474,9 @@ function updateCameraTogglesUI(routeObj) {
             if (row) row.classList.add('disabled');
         }
     }
+
+    // Sync WebGL shader uniforms with the newly updated toggle states
+    updateFisheyeProjections();
 }
 
 // Switches the active route, resets state, and reloads video streams
