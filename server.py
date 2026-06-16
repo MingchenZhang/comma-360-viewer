@@ -447,8 +447,6 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
         return ""
 
     def get_accurate_segment_time(self, route_path):
-        global log_capnp
-        
         parent_dir, folder_name = os.path.split(route_path)
         if "--" in folder_name:
             parts = folder_name.split('--')
@@ -461,23 +459,8 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
         else:
             route_prefix = folder_name
             segment_index = 0
-            
-        cache_key = os.path.join(parent_dir, route_prefix)
-        
-        # 1. Check Cache
-        with route_time_lock:
-            if cache_key in route_time_cache:
-                route_start_time = route_time_cache[cache_key]
-                if route_start_time is not None:
-                    seg_time = route_start_time + segment_index * 60.0
-                    return datetime.datetime.fromtimestamp(seg_time).strftime('%Y-%m-%d %H:%M:%S')
-                else:
-                    return self.get_fallback_mtime(route_path)
-                    
-        # 2. Not in Cache: Scan sibling segments
-        resolved_route_start = None
-        
-        # List siblings
+
+        # Find all sibling folders
         sibling_folders = []
         search_dir = os.path.join(WORKSPACE, parent_dir) if parent_dir else WORKSPACE
         if os.path.exists(search_dir):
@@ -487,76 +470,34 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
                         sibling_folders.append(item)
             except Exception as e:
                 print(f"[Dynamic Routes] Error listing siblings: {e}")
-                
-        # Sort siblings by segment index
+
+        # Sort siblings by segment index to find the highest index
         def get_seg_idx(name):
             try:
                 return int(name.split('--')[-1])
             except Exception:
-                return 9999
-                
+                return 0
+
         sibling_folders.sort(key=get_seg_idx)
         
-        # Load schemas if not already loaded
-        if log_capnp is None:
-            load_schemas()
+        if sibling_folders:
+            last_sibling = sibling_folders[-1]
+            last_idx = get_seg_idx(last_sibling)
             
-        if log_capnp is not None:
-            for sib in sibling_folders:
-                sib_idx = get_seg_idx(sib)
-                sib_path = os.path.join(parent_dir, sib)
-                sib_full_path = os.path.join(WORKSPACE, sib_path)
-                qlog_path = os.path.join(sib_full_path, "qlog.zst")
-                
-                if os.path.exists(qlog_path):
-                    try:
-                        dctx = zstandard.ZstdDecompressor()
-                        with open(qlog_path, 'rb') as f:
-                            compressed = f.read()
-                        with dctx.stream_reader(compressed) as reader:
-                            dat = reader.read()
-                            
-                        events = list(log_capnp.Event.read_multiple_bytes(dat))
-                        gps_events = [e for e in events if e.which() == 'gpsLocation']
-                        
-                        # Find first event with a valid GPS lock (epoch >= 2020-01-01)
-                        valid_gps = None
-                        for ev in gps_events:
-                            gps = ev.gpsLocation
-                            if gps.unixTimestampMillis > 1577836800000:
-                                valid_gps = ev
-                                break
-                                
-                        if valid_gps:
-                            gps = valid_gps.gpsLocation
-                            
-                            # Get start mono time
-                            road_frames = [e for e in events if e.which() == 'roadEncodeIdx']
-                            if road_frames:
-                                road_frames.sort(key=lambda x: x.roadEncodeIdx.frameId)
-                                start_mono = road_frames[0].roadEncodeIdx.timestampSof
-                            else:
-                                start_mono = events[0].logMonoTime
-                                
-                            gps_time_sec = gps.unixTimestampMillis / 1000.0
-                            mono_diff_sec = (valid_gps.logMonoTime - start_mono) / 1e9
-                            sib_start_time = gps_time_sec - mono_diff_sec
-                            
-                            # Back-propagate to route start (segment 0)
-                            resolved_route_start = sib_start_time - sib_idx * 60.0
-                            break
-                    except Exception as e:
-                        print(f"[Dynamic Routes] Error reading {qlog_path}: {e}")
-                        
-        # Cache the result
-        with route_time_lock:
-            route_time_cache[cache_key] = resolved_route_start
+            last_sib_path = os.path.join(parent_dir, last_sibling)
+            last_mtime = self.get_fallback_mtime(last_sib_path)
             
-        if resolved_route_start is not None:
-            seg_time = resolved_route_start + segment_index * 60.0
-            return datetime.datetime.fromtimestamp(seg_time).strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            return self.get_fallback_mtime(route_path)
+            if last_mtime:
+                try:
+                    dt_last = datetime.datetime.strptime(last_mtime, '%Y-%m-%d %H:%M:%S')
+                    # Back-propagate start time to segment 0, and then offset to current segment_index
+                    offset_sec = (segment_index - last_idx) * 60.0
+                    seg_dt = dt_last + datetime.timedelta(seconds=offset_sec)
+                    return seg_dt.strftime('%Y-%m-%d %H:%M:%S')
+                except Exception as e:
+                    print(f"[Dynamic Routes] Error parsing mtime: {e}")
+                    
+        return self.get_fallback_mtime(route_path)
 
     def send_routes_json(self):
         # Find all route subdirectories in WORKSPACE (and WORKSPACE/realdata if it exists)
