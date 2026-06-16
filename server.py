@@ -78,7 +78,7 @@ telemetry_lock = threading.Lock()
 route_time_cache = {}
 route_time_lock = threading.Lock()
 
-PORT = 8080
+PORT = 8082
 STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE = STATIC_DIR
 CACHE_DIR = os.path.join(STATIC_DIR, ".cache")
@@ -812,8 +812,8 @@ def run():
     parser.add_argument(
         "--port", "-p",
         type=int,
-        default=8080,
-        help="Port number to run the HTTP server on (default: 8080)."
+        default=8082,
+        help="Port number to run the HTTP server on (default: 8082)."
     )
     args = parser.parse_args()
     
