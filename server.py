@@ -189,10 +189,8 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
             filepath = self.translate_path(self.path)
             has_cache_control = any(b'cache-control' in h.lower() for h in self._headers_buffer)
             if not has_cache_control:
-                # Permanently cache static vendor libraries in /js/ directory
-                if "/js/" in self.path or "/js/" in filepath:
-                    self.send_header('Cache-Control', 'public, max-age=31536000')
-                elif filepath.endswith(('.html', '.js', '.css', '.json')) or self.path in ['/', '/index.html', '/app.js', '/styles.css']:
+                # Disable caching for all html, js, css, and json resources
+                if filepath.endswith(('.html', '.js', '.css', '.json', '.mjs')) or any(x in self.path for x in ['/', '/index.html', '/app.js', '/styles.css', '/js/']):
                     self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
                     self.send_header('Pragma', 'no-cache')
                     self.send_header('Expires', '0')
