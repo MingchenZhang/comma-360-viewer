@@ -1,5 +1,9 @@
 # Comma 360 Viewer
 
+https://github.com/user-attachments/assets/3f6604db-b97d-48c8-963b-f5a5fcc28282
+
+
+
 An interactive, browser-based WebGL panorama viewer designed to visualize Comma Three road cameras (`ecamera` and `fcamera`) and driver camera (`dcamera`) in a unified, synchronized space. The application dynamically dewarps the fisheye wide lens streams to reconstruct a complete 360-degree interactive panorama with real-time HUD and synchronized audio playback.
 
 ## Features
@@ -32,6 +36,7 @@ If you do not have internet, the remote GitHub server won't be reachable. You ca
 
 ## How to Access in the Field
 
+*You still need to ensure your phone have the ssh key to log into comma.*
 When you are out in the field (e.g. in your car), you can connect your mobile device or laptop to the viewer using one of these two connection methods:
 
 ### Method 1: Comma Three Wi-Fi Hotspot (Tethering)
@@ -46,7 +51,12 @@ When you are out in the field (e.g. in your car), you can connect your mobile de
 3. Use your favorite ssh terminal to connect to Comma and run the `deploy.sh`.
 4. Open your browser on your phone and navigate to the Comma Three's IP address on port `8082` (e.g., `http://<comma-ip-address>:8082`).
 
-*You still need to ensure your phone have the ssh key to log into comma.*
+---
+
+## Calibration
+
+I have only used this on my comma 3X and I have no idea how alignment differ across units of comma 3X. You can use keyboard key D or double click the green online icon to activate the calibration menu to adjust alignment for your device. 
+While in calibration interface, holding Q to enable blended view with footage overlapping, holding W to show driver camera with higher priority. Pressing A to return to horizon, which i found useful initally to get the front fisheye pitch correct. 
 
 ---
 
