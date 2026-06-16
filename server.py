@@ -795,6 +795,10 @@ def run():
             else:
                 super().handle_error(request, client_address)
 
+    default_ws = "/data/media/0/realdata/"
+    if not os.path.exists(default_ws):
+        default_ws = "."
+
     parser = argparse.ArgumentParser(
         description="Multi-threaded Comma.ai 360° Panorama Viewer Server. "
                     "Extracts audio tracks on-the-fly and transmuxes video segments in memory."
@@ -802,8 +806,8 @@ def run():
     parser.add_argument(
         "workspace",
         nargs="?",
-        default=".",
-        help="Path to the video route directory containing segment folders (default: current directory)."
+        default=default_ws,
+        help=f"Path to the video route directory containing segment folders (default: {default_ws})."
     )
     parser.add_argument(
         "--port", "-p",
