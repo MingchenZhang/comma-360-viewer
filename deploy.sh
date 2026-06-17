@@ -5,7 +5,7 @@ set -e
 INSTALL_DIR="/data/comma-360-viewer"
 REPO_URL="https://github.com/MingchenZhang/comma-360-viewer.git"
 PORT=8082
-PID_FILE="/tmp/comma-360-viewer.pid"
+PROCESS_CONFIG="/data/openpilot/system/manager/process_config.py"
 
 echo "============================================="
 echo "      Comma 360 Viewer Installer & Runner    "
@@ -24,10 +24,10 @@ fi
 
 # 2. Clone or Update the Repository
 if [ ! -d "$INSTALL_DIR" ]; then
-    echo "[1/4] Cloning comma-360-viewer repository..."
+    echo "[1/5] Cloning comma-360-viewer repository..."
     git clone "$REPO_URL" "$INSTALL_DIR"
 else
-    echo "[1/4] Existing installation found. Checking for updates..."
+    echo "[1/5] Existing installation found. Checking for updates..."
     cd "$INSTALL_DIR"
     # Try to fetch from remote. If offline, this will fail quickly and skip updating.
     if git fetch --all --timeout=10 &> /dev/null; then
@@ -40,18 +40,11 @@ fi
 
 cd "$INSTALL_DIR"
 
-# 3. Stop running instance if exists
-if [ -f "$PID_FILE" ]; then
-    OLD_PID=$(cat "$PID_FILE")
-    if ps -p "$OLD_PID" > /dev/null; then
-        echo "[2/4] Stopping previously running instance (PID: $OLD_PID)..."
-        kill "$OLD_PID" || kill -9 "$OLD_PID"
-    fi
-    rm -f "$PID_FILE"
-fi
+# 2.5 Clean up any leftover PID file from old deploy.sh versions
+rm -f /tmp/comma-360-viewer.pid
 
-# 4. Resolve Dependencies
-echo "[3/4] Checking Python dependencies..."
+# 3. Resolve Dependencies
+echo "[2/5] Checking Python dependencies..."
 USE_VENV=false
 
 # First, check if system python already has capnp and zstandard (common in comma/openpilot envs)
@@ -67,36 +60,160 @@ else
     # Activate virtualenv
     source .venv/bin/activate
     PYTHON_EXEC="python3"
-    
+
     echo " -> Upgrading pip and installing wheel..."
     pip install --upgrade pip wheel --quiet || echo " -> Warning: Offline, skipping pip upgrade."
-    
+
     echo " -> Installing 'zstandard' and 'pycapnp' (this might take a moment to compile)..."
     pip install zstandard pycapnp --quiet || echo " -> Warning: Offline, using existing packages if installed."
 fi
 
-# 5. Start the Server in the Background
-echo "[4/4] Starting Comma 360 Viewer server..."
-if [ "$USE_VENV" = true ]; then
+# 4. Create run.sh wrapper for NativeProcess
+echo "[3/5] Creating process manager launcher..."
+
+cat > run.sh << 'RUNEOF'
+#!/bin/bash
+# Wrapper for openpilot NativeProcess — handles venv activation
+set -e
+cd "$(dirname "$0")"
+if [ -d .venv ]; then
     source .venv/bin/activate
 fi
+exec python3 server.py --port 8082
+RUNEOF
+chmod +x run.sh
+echo " -> Created run.sh"
 
-# Start server.py in background, redirecting stdout/stderr to server.log
-nohup $PYTHON_EXEC server.py --host 0.0.0.0 --port $PORT > server.log 2>&1 &
-NEW_PID=$!
-echo $NEW_PID > "$PID_FILE"
+# 5. Inject into process_config.py
+echo "[4/5] Injecting into process manager..."
 
-# 6. Retrieve Device IP Address for Access
-IP_ADDR=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7}' || hostname -I | awk '{print $1}')
+inject_process_config() {
+    if [ ! -f "$PROCESS_CONFIG" ]; then
+        echo " -> process_config.py not found at $PROCESS_CONFIG"
+        echo " -> Skipping injection. Run deploy.sh again after openpilot is installed."
+        return 0
+    fi
+
+    python3 << 'PYEOF'
+import os, sys
+
+TARGET = "/data/openpilot/system/manager/process_config.py"
+ANCHOR = "managed_processes = {p.name: p for p in procs}"
+
+BLOCK = """
+# comma-360-viewer (injected by deploy.sh — safe to remove manually)
+if os.path.exists("/data/comma-360-viewer/server.py"):
+    procs += [
+        NativeProcess("comma_360_viewer", "/data/comma-360-viewer",
+                      ["./run.sh"], only_offroad),
+    ]
+"""
+
+# 1. Read file
+try:
+    with open(TARGET) as f:
+        original = f.read()
+except FileNotFoundError:
+    print(" -> process_config.py not found. Skipping injection.", file=sys.stderr)
+    sys.exit(0)
+except PermissionError:
+    print("FATAL: Cannot read process_config.py (permission denied).", file=sys.stderr)
+    sys.exit(4)
+
+# 2. Check if already injected
+if "comma_360_viewer" in original:
+    print(" -> Already injected, skipping.")
+    sys.exit(0)
+
+# 3. Verify anchor exists
+if ANCHOR not in original:
+    print("", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
+    print("FATAL: Cannot inject — anchor line not found.", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Expected line:", file=sys.stderr)
+    print(f"  {ANCHOR}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("This means your openpilot fork has changed the structure", file=sys.stderr)
+    print("of process_config.py in a way this installer doesn't support.", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("comma-360-viewer was NOT injected. The file was NOT modified.", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("You can still run the viewer manually:", file=sys.stderr)
+    print("  /data/comma-360-viewer/run.sh", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Please report your fork/version at:", file=sys.stderr)
+    print("  https://github.com/MingchenZhang/comma-360-viewer/issues", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
+    sys.exit(2)
+
+# 4. Inject the block
+modified = original.replace(ANCHOR, BLOCK.strip("\n") + "\n" + ANCHOR, 1)
+
+# 5. Syntax check
+try:
+    compile(modified, TARGET, "exec")
+except SyntaxError as e:
+    print("", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
+    print("FATAL: Injection produced invalid Python.", file=sys.stderr)
+    print("", file=sys.stderr)
+    print(f"Syntax error: {e}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("comma-360-viewer was NOT injected. The file was NOT modified.", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Please report this at:", file=sys.stderr)
+    print("  https://github.com/MingchenZhang/comma-360-viewer/issues", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
+    sys.exit(3)
+
+# 6. Write
+try:
+    with open(TARGET, "w") as f:
+        f.write(modified)
+except PermissionError:
+    print("FATAL: Cannot write process_config.py (permission denied).", file=sys.stderr)
+    sys.exit(4)
+
+print(" -> Successfully injected comma-360-viewer into process_config.py")
+PYEOF
+
+    return $?
+}
+
+INJECT_EXIT=0
+inject_process_config || INJECT_EXIT=$?
+
+# 6. Status
+echo "[5/5] Done."
+
+# Retrieve Device IP Address for access info
+IP_ADDR=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7}' || hostname -I 2>/dev/null | awk '{print $1}')
 if [ -z "$IP_ADDR" ]; then
     IP_ADDR="<device-ip-address>"
 fi
 
-echo "============================================="
-echo " Comma 360 Viewer is now RUNNING!"
-echo " PID: $NEW_PID"
-echo " Log file: $INSTALL_DIR/server.log"
 echo ""
-echo " Access the interface in your browser at:"
-echo "   --> http://$IP_ADDR:$PORT <--"
+echo "============================================="
+echo " Comma 360 Viewer deployed to:"
+echo "   $INSTALL_DIR"
+echo ""
+
+if [ $INJECT_EXIT -eq 0 ] && [ -f "$PROCESS_CONFIG" ] && grep -q "comma_360_viewer" "$PROCESS_CONFIG" 2>/dev/null; then
+    echo " Process manager:  INJECTED"
+    echo "   -> Auto-starts when car is offroad (parked)"
+    echo "   -> Auto-stops when car is onroad (driving)"
+    echo "   -> Takes effect on next reboot or manager restart"
+elif [ $INJECT_EXIT -eq 2 ] || [ $INJECT_EXIT -eq 3 ]; then
+    echo " Process manager:  NOT INJECTED (see errors above)"
+    echo "   -> Run the viewer manually:"
+    echo "      $INSTALL_DIR/run.sh"
+else
+    echo " Process manager:  not injected (openpilot not detected)"
+    echo "   -> Run deploy.sh again after installing openpilot"
+    echo "   -> Or start manually: $INSTALL_DIR/run.sh"
+fi
+
+echo ""
+echo " Access at: http://$IP_ADDR:$PORT"
 echo "============================================="
