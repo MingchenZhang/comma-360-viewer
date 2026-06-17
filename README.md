@@ -8,61 +8,76 @@ An interactive, browser-based WebGL panorama viewer designed to visualize Comma 
 
 ## Features
 - **360-Degree WebGL Projections**: Dewarps and stitches wide-angle front, zoom-in, and driver cameras.
+- **No export needed**: Raw streams are transmuxed on the fly and sent straight to your favorite browser. 
 - **Dynamic Calibration Control**: Adjust focal lengths, max theta fields, and camera pan/rotations in real-time.
 - **Synchronized Playback**: Syncs multiple video feeds (`ecamera`, `fcamera`, `dcamera`) and audio track (`qcamera.m4a`).
 - **Telemetry HUD**: Interactive Leaflet maps tracking real-time GPS coordinates, speed, and drift synchronization lights.
-- **Responsive Layout**: Designed for seamless desktop, tablet, and mobile viewing (including fullscreen mode).
+- **Responsive Layout**: Designed for seamless desktop, tablet, and mobile viewing (including fullscreen mode). Perfect for reviewing footage in the field. 
 
 ---
 
 ## Deployment & Running on Comma Three
 
-Since the Comma Three home directory is volatile and wiped on reboot, the application is persistently deployed to the `/data` partition (`/data/comma-360-viewer`).
+Since the Comma Three home directory is volatile and wiped on reboot, the application is persistently deployed to the `/data` partition (`/data/comma-360-viewer`). 
 
-### Option A: Running with Internet (First Time Install / Update)
-To install the viewer for the first time, or to pull the latest updates from GitHub and restart the server, SSH into your Comma Three and run this single command:
-```bash
-curl -sSL https://raw.githubusercontent.com/MingchenZhang/comma-360-viewer/main/deploy.sh | bash
-```
+The installation script registers the viewer service as a managed process inside openpilot's process manager (`process_config.py`). Once registered:
+- The viewer **auto-starts** in the background whenever the car is **offroad** (parked).
+- The viewer **auto-stops** when the car is **onroad** (driving) to ensure zero overhead/interference with active driving safety systems.
+- There is **no need to maintain an SSH connection** or manually run startup scripts.
 
-### Option B: Running without Internet (Offline Mode in the Field)
-If you do not have internet, the remote GitHub server won't be reachable. You can run/restart the server offline using the locally cached copy of the deployment script:
-```bash
-/data/comma-360-viewer/deploy.sh
-```
-*Note: The script will automatically skip checking for updates on GitHub and launch using the local cached codebase.*
+> [!WARNING]
+> The code survives minor openpilot updates, but the registration of getting it to auto-start does not. So you would need to rerun the following installation script after an update. 
+
+### Installation / Updates
+To install the viewer for the first time, or to pull the latest updates from GitHub and re-inject the configuration:
+1. SSH into your Comma Three.
+2. Run this single command:
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/MingchenZhang/comma-360-viewer/main/deploy.sh | bash
+   ```
+3. Reboot the device or restart the openpilot manager for the changes to take effect.
 
 ---
 
 ## How to Access in the Field
 
-*You still need to ensure your phone have the ssh key to log into comma.*
-When you are out in the field (e.g. in your car), you can connect your mobile device or laptop to the viewer using one of these two connection methods:
+Once installed and running via openpilot's process manager, the viewer is active whenever the car is parked. You can connect your phone, tablet, or laptop using one of these two methods:
 
 ### Method 1: Comma Three Wi-Fi Hotspot (Tethering)
-1. On your Comma Three, enable the Wi-Fi Hotspot (Tethering) in the Network -> Advanced.
-2. Connect your phone, tablet, or laptop to the Comma Three's Wi-Fi network.
-3. Use your favorite ssh terminal to connect to Comma and run the `deploy.sh`.
-4. Open your browser and navigate to the address shown by the deployment script (usually `http://192.168.43.1:8082`).
+1. On your Comma Three, enable the Wi-Fi Hotspot (Tethering) in **Network** -> **Advanced**.
+2. Connect your device (phone, tablet, or laptop) to the Comma Three's Wi-Fi network.
+3. Open your browser and navigate to:
+   ```
+   http://192.168.43.1:8082
+   ```
 
 ### Method 2: Phone Hotspot Connection
 1. Turn on the Personal Hotspot on your phone.
 2. Connect your Comma Three to your phone's Wi-Fi hotspot.
-3. Use your favorite ssh terminal to connect to Comma and run the `deploy.sh`.
-4. Open your browser on your phone and navigate to the Comma Three's IP address on port `8082` (e.g., `http://<comma-ip-address>:8082`).
+3. Find the IP address of the Comma Three in **Settings** -> **Network** -> **Advanced**.
+4. Open your browser on your phone and navigate to the Comma Three's IP address on port `8082`:
+   ```
+   http://<comma-ip-address>:8082
+   ```
 
 ---
 
 ## Calibration
 
-I have only used this on my comma 3X and I have no idea how alignment differ across units of comma 3X. You can use keyboard key D or double click the green online icon to activate the calibration menu to adjust alignment for your device. 
-While in calibration interface, holding Q to enable blended view with footage overlapping, holding W to show driver camera with higher priority. Pressing A to return to horizon, which i found useful initally to get the front fisheye pitch correct. 
+I have only used this on my comma 3X and I have set the default calibration to fit my footage perfectly. However, I have no idea how alignment differs across units of comma 3X. If you need to adjust your alignment:
+
+You can use keyboard key D or double click the green online icon to activate the calibration menu to adjust alignment for your Comma. Alignment results are currently saved in the browser. 
+
+While in the calibration interface, holding Q enables blended view with footage overlapping, and holding W shows the driver camera with higher priority. Pressing A returns to the horizon, which I found useful initially to get the front fisheye pitch correct. 
 
 ---
 
 ## Disk Space & Cache Precautions
 
-To support fast load times, the backend server automatically transmuxes HEVC streams into browser-playable MP4 containers and caches the results on disk under the `.cache/` directory.
+To support fast load times, the backend server automatically transmuxes HEVC streams into browser-playable MP4 containers and caches the results on disk under the `/data/comma-360-viewer/.cache/` directory.
+
+> [!TIP]
+> If you use **Firefox**, the transmuxing happens in the browser, so **no large video caching files are generated**. This web app tries to do that on Chrome, but it currently fails. See `muxing_guide.md` for explanation. 
 
 ### Automatic Cache Eviction
 Since video cache files can be very large (up to ~75MB per segment per camera), the server includes a **diligent disk space protection cleaner** that runs in the background. Whenever a new cache file is written:
@@ -70,4 +85,4 @@ Since video cache files can be very large (up to ~75MB per segment per camera), 
 - It checks if the remaining disk space on the partition drops below **5 GiB**.
 - If either condition is met, the server automatically deletes the **oldest cached route segment** (using file modification times) in a loop until the system is within safe limits.
 
-*No manual cache clearing is needed; the server will manage its own footprint dynamically. However do be aware of these files when youhave other files requiring disk space.*
+*No manual cache clearing is needed; the server will manage its own footprint dynamically. However, do be aware of these files when you have other files requiring disk space.*
