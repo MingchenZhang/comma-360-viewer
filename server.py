@@ -280,6 +280,11 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
         # Decode path
         parsed_url = urllib.parse.urlparse(self.path)
         
+        # Intercept calibration read request
+        if parsed_url.path in ['/api/calibration', '/api/calibration/', 'api/calibration']:
+            self.send_calibration()
+            return
+            
         # Intercept /routes.json request
         if parsed_url.path in ['/routes.json', 'routes.json']:
             self.send_routes_json()
@@ -332,6 +337,37 @@ class CommaVidRequestHandler(SimpleHTTPRequestHandler):
 
         # Fall back to standard static file serving
         super().do_GET()
+
+    def do_POST(self):
+        parsed_url = urllib.parse.urlparse(self.path)
+        if parsed_url.path in ['/api/calibration', '/api/calibration/', 'api/calibration']:
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                post_data = self.rfile.read(content_length)
+                cal_data = json.loads(post_data.decode('utf-8'))
+                
+                cal_path = os.path.join(STATIC_DIR, "calibration.json")
+                with open(cal_path, "w") as f:
+                    json.dump(cal_data, f, indent=2)
+                
+                print(f"[Calibration] Saved server-side calibration successfully")
+                self.serve_json({"status": "success"})
+            except Exception as e:
+                print(f"[Calibration] Error saving calibration: {e}")
+                self.send_error(500, f"Error saving calibration: {e}")
+        else:
+            self.send_error(404, "Not Found")
+
+    def send_calibration(self):
+        cal_path = os.path.join(STATIC_DIR, "calibration.json")
+        data = {}
+        if os.path.exists(cal_path):
+            try:
+                with open(cal_path, "r") as f:
+                    data = json.load(f)
+            except Exception as e:
+                print(f"[Calibration] Error reading calibration file: {e}")
+        self.serve_json(data)
 
     def get_cached_or_transmux(self, hevc_path, mp4_path):
         # Check cache first

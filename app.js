@@ -89,7 +89,7 @@ async function initApp() {
                 supportsHevcMse ? "color: #34c759; font-weight: bold; font-size: 1.1em;" : "color: #ff9500; font-weight: bold; font-size: 1.1em;");
 
     // Load persisted calibration parameters
-    loadCalibrationFromStorage();
+    await loadCalibrationFromServer();
 
     // 1. Initialize Lucide Icons
     if (window.lucide) {
@@ -987,8 +987,8 @@ function updateFisheyeProjections() {
     const narrowEnabled = document.getElementById('narrow-cam-toggle').checked;
     combinedMaterial.uniforms.u_narrow_enabled.value = narrowEnabled ? 1.0 : 0.0;
 
-    // Persist new parameters to localStorage
-    saveCalibrationToStorage();
+    // Persist new parameters to server side
+    saveCalibrationToServer();
 }
 
 // Compute inverse rotation matrix from Euler angles to map world -> camera space
@@ -2063,50 +2063,44 @@ function updateCompassDisplay() {
     }
 }
 
-// Local Storage Persistence Helpers
-function saveCalibrationToStorage() {
-    localStorage.setItem('comma_360_calibration', JSON.stringify({
-        frontYaw: state.calibration.frontYaw,
-        frontPitch: state.calibration.frontPitch,
-        frontRoll: state.calibration.frontRoll,
-        frontFocal: state.calibration.frontFocal,
-        frontMaxTheta: state.calibration.frontMaxTheta,
-        frontPanX: state.calibration.frontPanX,
-        frontPanY: state.calibration.frontPanY,
-        frontPanZ: state.calibration.frontPanZ,
-        narrowYaw: state.calibration.narrowYaw,
-        narrowPitch: state.calibration.narrowPitch,
-        narrowRoll: state.calibration.narrowRoll,
-        narrowFocal: state.calibration.narrowFocal,
-        narrowMaxTheta: state.calibration.narrowMaxTheta,
-        narrowPanX: state.calibration.narrowPanX,
-        narrowPanY: state.calibration.narrowPanY,
-        narrowPanZ: state.calibration.narrowPanZ,
-        driverYaw: state.calibration.driverYaw,
-        driverPitch: state.calibration.driverPitch,
-        driverRoll: state.calibration.driverRoll,
-        driverFocal: state.calibration.driverFocal,
-        driverMaxTheta: state.calibration.driverMaxTheta,
-        driverPanX: state.calibration.driverPanX,
-        driverPanY: state.calibration.driverPanY,
-        driverPanZ: state.calibration.driverPanZ,
-        radius: state.calibration.radius
-    }));
+// Server-Side Calibration Persistence Helpers
+let saveCalibrationTimeout = null;
+
+function saveCalibrationToServer() {
+    if (saveCalibrationTimeout) {
+        clearTimeout(saveCalibrationTimeout);
+    }
+    
+    saveCalibrationTimeout = setTimeout(async () => {
+        try {
+            await fetch('api/calibration', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(state.calibration)
+            });
+            console.log("[Calibration] Saved calibration to server.");
+        } catch (e) {
+            console.error("[Calibration] Failed to save calibration to server:", e);
+        }
+    }, 500);
 }
 
-function loadCalibrationFromStorage() {
-    const saved = localStorage.getItem('comma_360_calibration');
-    if (saved) {
-        try {
-            const parsed = JSON.parse(saved);
+async function loadCalibrationFromServer() {
+    try {
+        const res = await fetch('api/calibration');
+        if (res.ok) {
+            const parsed = await res.json();
             Object.keys(parsed).forEach(key => {
                 if (state.calibration[key] !== undefined) {
                     state.calibration[key] = parsed[key];
                 }
             });
-        } catch (e) {
-            console.warn("Failed to load saved calibration:", e);
+            console.log("[Calibration] Loaded server-side calibration successfully:", parsed);
         }
+    } catch (e) {
+        console.warn("[Calibration] Failed to load server-side calibration:", e);
     }
 }
 

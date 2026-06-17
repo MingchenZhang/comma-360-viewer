@@ -66,7 +66,7 @@ Once installed and running via openpilot's process manager, the viewer is active
 
 I have only used this on my comma 3X and I have set the default calibration to fit my footage perfectly. However, I have no idea how alignment differs across units of comma 3X. If you need to adjust your alignment:
 
-You can use keyboard key D or double click the green online icon to activate the calibration menu to adjust alignment for your Comma. Alignment results are currently saved in the browser. 
+You can use keyboard key D or double click the green online icon to activate the calibration menu to adjust alignment for your Comma. Alignment results are saved server-side in `calibration.json` (inside the installation directory), so your settings are preserved across different devices and browser sessions.
 
 While in the calibration interface, holding Q enables blended view with footage overlapping, and holding W shows the driver camera with higher priority. Pressing A returns to the horizon, which I found useful initially to get the front fisheye pitch correct. 
 
