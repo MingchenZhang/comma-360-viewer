@@ -86,3 +86,16 @@ Since video cache files can be very large (up to ~75MB per segment per camera), 
 - If either condition is met, the server automatically deletes the **oldest cached route segment** (using file modification times) in a loop until the system is within safe limits.
 
 *No manual cache clearing is needed; the server will manage its own footprint dynamically. However, do be aware of these files when you have other files requiring disk space.*
+
+---
+
+## License & Credits
+
+This project is licensed under the [MIT License](LICENSE).
+
+### Third-Party Libraries
+This application vendors and uses the following open-source libraries:
+- **[Three.js](https://github.com/mrdoob/three.js)** (MIT License) - WebGL 3D/panoramic rendering
+- **[JMuxer](https://github.com/samirkumardas/jmuxer)** (MIT License) - Browser-side raw H.264/H.265 media stream muxing
+- **[Leaflet](https://github.com/Leaflet/Leaflet)** (BSD 2-Clause License) - Interactive map overlay
+- **[Lucide Icons](https://github.com/lucide-icons/lucide)** (ISC License) - Modern UI icons
