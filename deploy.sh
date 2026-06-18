@@ -41,7 +41,7 @@ if [ ! -d "$INSTALL_DIR" ]; then
 else
     echo "[1/5] Existing installation found. Checking for updates..."
     cd "$INSTALL_DIR"
-    if git fetch --all --timeout=10 &> /dev/null; then
+    if git fetch --all &> /dev/null; then
         echo " -> Online. Pulling latest $BRANCH..."
         git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH"
         git reset --hard "origin/$BRANCH" || git reset --hard "github/$BRANCH"
