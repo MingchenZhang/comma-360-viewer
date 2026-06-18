@@ -12,7 +12,11 @@ BRANCH="main"
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --branch|-b) BRANCH="$2"; shift 2 ;;
+        --branch|-b) BRANCH="$2"
+                      if [ -z "$BRANCH" ]; then
+                          echo "Error: --branch requires a branch name" >&2; exit 1
+                      fi
+                      shift 2 ;; 
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
