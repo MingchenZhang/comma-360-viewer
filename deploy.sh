@@ -7,9 +7,21 @@ REPO_URL="https://github.com/MingchenZhang/comma-360-viewer.git"
 PORT=8082
 PROCESS_CONFIG="/data/openpilot/system/manager/process_config.py"
 
+BRANCH="main"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --branch|-b) BRANCH="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
+
 echo "============================================="
 echo "      Comma 360 Viewer Installer & Runner    "
 echo "============================================="
+echo " Branch: $BRANCH"
+echo ""
 
 # 1. Check Git & Python Installation
 if ! command -v git &> /dev/null; then
@@ -24,17 +36,18 @@ fi
 
 # 2. Clone or Update the Repository
 if [ ! -d "$INSTALL_DIR" ]; then
-    echo "[1/5] Cloning comma-360-viewer repository..."
-    git clone "$REPO_URL" "$INSTALL_DIR"
+    echo "[1/5] Cloning comma-360-viewer repository ($BRANCH)..."
+    git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
 else
     echo "[1/5] Existing installation found. Checking for updates..."
     cd "$INSTALL_DIR"
-    # Try to fetch from remote. If offline, this will fail quickly and skip updating.
     if git fetch --all --timeout=10 &> /dev/null; then
-        echo " -> Online. Pulling latest updates..."
-        git reset --hard github/main || git reset --hard origin/main
+        echo " -> Online. Pulling latest $BRANCH..."
+        git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH"
+        git reset --hard "origin/$BRANCH" || git reset --hard "github/$BRANCH"
     else
-        echo " -> Network unreachable or offline. Skipping update, using local cache..."
+        echo " -> Network unreachable or offline. Using local cache..."
+        git checkout "$BRANCH" 2>/dev/null || true
     fi
 fi
 
