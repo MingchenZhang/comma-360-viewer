@@ -73,13 +73,13 @@ echo "[3/5] Creating process manager launcher..."
 
 cat > run.sh << 'RUNEOF'
 #!/bin/bash
-# Wrapper for openpilot NativeProcess — handles venv activation
-set -e
+# Launcher for openpilot NativeProcess — handles venv activation.
+# Restart logic lives in server.py (signal-transparent, in-process).
 cd "$(dirname "$0")"
 if [ -d .venv ]; then
     source .venv/bin/activate
 fi
-exec python3 server.py --port 8082
+exec python3 server.py --port 8082 >> /tmp/comma-360-viewer.log 2>&1
 RUNEOF
 chmod +x run.sh
 echo " -> Created run.sh"
@@ -95,10 +95,13 @@ inject_process_config() {
     fi
 
     python3 << 'PYEOF'
-import os, sys
+import os, sys, re
 
 TARGET = "/data/openpilot/system/manager/process_config.py"
-ANCHOR = "managed_processes = {p.name: p for p in procs}"
+
+# Anchor: the one line that's identical across all openpilot forks.
+# We match leniently — any whitespace variation around the anchor.
+ANCHOR_PATTERN = r'^managed_processes\s*=\s*\{\s*p\.name\s*:\s*p\s+for\s+p\s+in\s+procs\s*\}'
 
 BLOCK = """
 # comma-360-viewer (injected by deploy.sh — safe to remove manually)
@@ -125,14 +128,26 @@ if "comma_360_viewer" in original:
     print(" -> Already injected, skipping.")
     sys.exit(0)
 
-# 3. Verify anchor exists
-if ANCHOR not in original:
+# 3. Find anchor line (lenient match — handles whitespace variations)
+lines = original.split("\n")
+anchor_idx = None
+for i, line in enumerate(lines):
+    if re.match(ANCHOR_PATTERN, line):
+        anchor_idx = i
+        matched_line = line
+        break
+
+if anchor_idx is None:
     print("", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
     print("FATAL: Cannot inject — anchor line not found.", file=sys.stderr)
     print("", file=sys.stderr)
-    print("Expected line:", file=sys.stderr)
-    print(f"  {ANCHOR}", file=sys.stderr)
+    print("Searched for pattern:", file=sys.stderr)
+    print(f"  {ANCHOR_PATTERN}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Last 3 lines of process_config.py:", file=sys.stderr)
+    for line in lines[-3:]:
+        print(f"  {line}", file=sys.stderr)
     print("", file=sys.stderr)
     print("This means your openpilot fork has changed the structure", file=sys.stderr)
     print("of process_config.py in a way this installer doesn't support.", file=sys.stderr)
@@ -147,8 +162,10 @@ if ANCHOR not in original:
     print("=" * 60, file=sys.stderr)
     sys.exit(2)
 
-# 4. Inject the block
-modified = original.replace(ANCHOR, BLOCK.strip("\n") + "\n" + ANCHOR, 1)
+# 4. Inject the block before the anchor line
+block_clean = BLOCK.strip("\n") + "\n"
+lines.insert(anchor_idx, block_clean)
+modified = "\n".join(lines)
 
 # 5. Syntax check
 try:
@@ -175,6 +192,13 @@ except PermissionError:
     print("FATAL: Cannot write process_config.py (permission denied).", file=sys.stderr)
     sys.exit(4)
 
+# 7. Verify — did our block actually land?
+with open(TARGET) as f:
+    written = f.read()
+if "comma_360_viewer" not in written:
+    print("FATAL: Write verification failed — injected text not found in file.", file=sys.stderr)
+    sys.exit(5)
+
 print(" -> Successfully injected comma-360-viewer into process_config.py")
 PYEOF
 
@@ -200,10 +224,15 @@ echo "   $INSTALL_DIR"
 echo ""
 
 if [ $INJECT_EXIT -eq 0 ] && [ -f "$PROCESS_CONFIG" ] && grep -q "comma_360_viewer" "$PROCESS_CONFIG" 2>/dev/null; then
-    echo " Process manager:  INJECTED"
-    echo "   -> Auto-starts when car is offroad (parked)"
-    echo "   -> Auto-stops when car is onroad (driving)"
-    echo "   -> Takes effect on next reboot or manager restart"
+    echo " Process manager:  INJECTED (auto-starts on next reboot)"
+
+    # Also start immediately so no reboot needed
+    if [ -f "$INSTALL_DIR/run.sh" ]; then
+        echo " Starting viewer now..."
+        bash "$INSTALL_DIR/run.sh" &
+        sleep 1
+        echo "   -> Running at http://$IP_ADDR:$PORT"
+    fi
 elif [ $INJECT_EXIT -eq 2 ] || [ $INJECT_EXIT -eq 3 ]; then
     echo " Process manager:  NOT INJECTED (see errors above)"
     echo "   -> Run the viewer manually:"
