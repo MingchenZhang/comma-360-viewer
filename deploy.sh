@@ -123,6 +123,7 @@ if os.path.exists("/data/comma-360-viewer/server.py"):
         NativeProcess("comma_360_viewer", "/data/comma-360-viewer",
                       ["./run.sh"], only_offroad),
     ]
+# /comma-360-viewer
 """
 
 # 1. Read file
