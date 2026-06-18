@@ -947,4 +947,19 @@ def run():
         httpd.server_close()
 
 if __name__ == '__main__':
-    run()
+    import signal as _signal, os as _os, time as _time, traceback as _traceback
+
+    # SIGINT from process manager → exit cleanly, never trigger backoff restart
+    _signal.signal(_signal.SIGINT, lambda *_: _os._exit(130))
+
+    _delay = 1
+    while True:
+        try:
+            run()
+        except SystemExit:
+            raise
+        except:
+            _traceback.print_exc()
+            print(f"Restarting in {_delay}s...", file=sys.stderr)
+            _time.sleep(_delay)
+            _delay = min(_delay * 2, 300)
