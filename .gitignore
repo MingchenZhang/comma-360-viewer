@@ -16,3 +16,4 @@ routes.json
 .gemini/
 .cache/
 calibration.json
+run.sh
