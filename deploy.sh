@@ -246,10 +246,14 @@ if [ $INJECT_EXIT -eq 0 ] && [ -f "$PROCESS_CONFIG" ] && grep -q "comma_360_view
 
     # Also start immediately so no reboot needed
     if [ -f "$INSTALL_DIR/run.sh" ]; then
-        echo " Starting viewer now..."
-        bash "$INSTALL_DIR/run.sh" &
-        sleep 1
-        echo "   -> Running at http://$IP_ADDR:$PORT"
+        if ss -tlnp 2>/dev/null | grep -q ":$PORT " || netstat -tlnp 2>/dev/null | grep -q ":$PORT "; then
+            echo "   -> Already running at http://$IP_ADDR:$PORT"
+        else
+            echo " Starting viewer now..."
+            bash "$INSTALL_DIR/run.sh" &
+            sleep 1
+            echo "   -> Running at http://$IP_ADDR:$PORT"
+        fi
     fi
 elif [ $INJECT_EXIT -eq 2 ] || [ $INJECT_EXIT -eq 3 ]; then
     echo " Process manager:  NOT INJECTED (see errors above)"
