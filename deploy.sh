@@ -253,7 +253,7 @@ inject_continue_sh() {
     # The block to inject — enclosed with comment markers
     INJECT_BLOCK='# comma-360-viewer (injected by deploy.sh — safe to remove manually)
 if [ -f /data/comma-360-viewer/run.sh ]; then
-    ionice -c 3 -n 7 bash /data/comma-360-viewer/run.sh &
+    ionice -c 3 bash /data/comma-360-viewer/run.sh &
 fi
 # /comma-360-viewer
 '
@@ -317,22 +317,29 @@ else
 
     # Choose injection method — try /dev/tty first (works even when
     # stdin is not a terminal, e.g. ssh host command).
-    echo ""
-    echo "  Choose startup method:"
-    echo ""
-    echo "    [1] process_config.py (openpilot process manager)"
-    echo "        • Safer: auto-stops when car is driving (ignition-aware)"
-    echo "        • ⚠ Wiped on openpilot OTA update — re-run deploy.sh after updates"
-    echo ""
-    echo "    [2] continue.sh (AGNOS boot script)"
-    echo "        • Survives openpilot OTA updates (no re-deploy needed)"
-    echo "        • Runs even while driving (lower I/O priority mitigates impact)"
-    echo "        • ⚠ If boot fails due to viewer issue, factory reset is the fallback"
-    echo ""
-    if read -p "  Choice [1/2] (default: 1): " choice < /dev/tty 2>/dev/null; then
+    # Menu goes to /dev/tty so it's visible even if stdout is buffered.
+    {
+        echo ""
+        echo "  Choose startup method:"
+        echo ""
+        echo "    [1] process_config.py (openpilot process manager)"
+        echo "        • Safer: auto-stops when car is driving (ignition-aware)"
+        echo "        • ⚠ If auto-update is enabled, OTA check runs on every offroad"
+        echo "          boot and wipes the injection — auto-start is ineffective."
+        echo ""
+        echo "    [2] continue.sh (AGNOS boot script)"
+        echo "        • Survives openpilot OTA updates (no re-deploy needed)"
+        echo "        • Runs even while driving (lower I/O priority mitigates impact)"
+        echo "        • ⚠ If boot fails, a manual factory reset is required"
+        echo "          (>4 taps on screen during boot, or SSH in and touch"
+        echo "          /data/__system_reset__ then reboot)"
+        echo ""
+    } > /dev/tty 2>/dev/null || true
+    echo -n "  Enter choice [1-2] (1): " > /dev/tty 2>/dev/null || true
+    if read choice < /dev/tty 2>/dev/null; then
         :
     else
-        echo ""
+        echo "" > /dev/tty 2>/dev/null || true
         echo " -> No terminal available for input, defaulting to process_config.py (safer)."
         echo "    Re-run with ssh -t or from an interactive session for the choice prompt."
         choice="1"
@@ -349,6 +356,12 @@ else
             fi
             inject_process_config
             INJECT_METHOD="process_config"
+            echo ""
+            echo "   ⚠  Note: if auto-update is enabled (Settings → Software), openpilot"
+            echo "      checks for updates on every offroad boot. The process_config.py"
+            echo "      injection will be wiped on the NEXT REBOOT, making auto-start"
+            echo "      ineffective. Re-run deploy.sh after each update, or use option [2]"
+            echo "      continue.sh to survive OTAs permanently."
             ;;
     esac
 fi
@@ -393,7 +406,7 @@ elif [ "$INJECT_METHOD" = "continue_sh" ] && [ -f "$CONTINUE_SH" ] && grep -v '^
             echo "   -> Already running at http://$IP_ADDR:$PORT"
         else
             echo " Starting viewer now..."
-            ionice -c 3 -n 7 bash "$INSTALL_DIR/run.sh" &
+            ionice -c 3 bash "$INSTALL_DIR/run.sh" &
             sleep 1
             echo "   -> Running at http://$IP_ADDR:$PORT"
         fi
