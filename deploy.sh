@@ -110,6 +110,7 @@ cd "\$(dirname "\$0")"
 if [ -d .venv ]; then
     source .venv/bin/activate
 fi
+echo "\$(date): starting server.py on port \$PORT" >> /tmp/comma-360-viewer.log
 exec python3 server.py --port "\$PORT" >> /tmp/comma-360-viewer.log 2>&1
 RUNEOF
 chmod +x run.sh
