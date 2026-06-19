@@ -285,16 +285,16 @@ fi
 
 # ---- End Injection Functions -------------------------------------------
 
-# 5. Detect existing startup injections
+# 5. Detect existing startup injections (ignore commented-out lines)
 echo "[4/5] Checking startup configuration..."
 
 IN_PROCESS_CONFIG=false
 IN_CONTINUE_SH=false
 
-if [ -f "$PROCESS_CONFIG" ] && grep -q "comma_360_viewer" "$PROCESS_CONFIG" 2>/dev/null; then
+if [ -f "$PROCESS_CONFIG" ] && grep -v '^[[:space:]]*#' "$PROCESS_CONFIG" 2>/dev/null | grep -q "comma_360_viewer"; then
     IN_PROCESS_CONFIG=true
 fi
-if [ -f "$CONTINUE_SH" ] && grep -q "comma-360-viewer" "$CONTINUE_SH" 2>/dev/null; then
+if [ -f "$CONTINUE_SH" ] && grep -v '^[[:space:]]*#' "$CONTINUE_SH" 2>/dev/null | grep -q "comma-360-viewer"; then
     IN_CONTINUE_SH=true
 fi
 
@@ -306,7 +306,7 @@ if $IN_PROCESS_CONFIG || $IN_CONTINUE_SH; then
     $IN_CONTINUE_SH && echo "    - continue.sh"
     echo " -> Skipping injection."
 
-    # Set INJECT_EXIT based on which exists
+    # Set INJECT_METHOD based on which exists
     if $IN_PROCESS_CONFIG; then
         INJECT_METHOD="process_config"
     else
@@ -333,6 +333,8 @@ else
         read -p "  Choice [1/2] (default: 1): " choice
     else
         # Non-interactive — default to process_config.py (safer)
+        echo " -> Running non-interactively, defaulting to process_config.py (safer)."
+        echo "    Use --port to customize. Re-run interactively for continue.sh option."
         choice="1"
     fi
 
@@ -366,7 +368,7 @@ echo " Comma 360 Viewer deployed to:"
 echo "   $INSTALL_DIR"
 echo ""
 
-if [ "$INJECT_METHOD" = "process_config" ] && [ -f "$PROCESS_CONFIG" ] && grep -q "comma_360_viewer" "$PROCESS_CONFIG" 2>/dev/null; then
+if [ "$INJECT_METHOD" = "process_config" ] && [ -f "$PROCESS_CONFIG" ] && grep -v '^[[:space:]]*#' "$PROCESS_CONFIG" 2>/dev/null | grep -q "comma_360_viewer"; then
     echo " Startup method:  process_config.py (openpilot process manager)"
     echo "                  Auto-starts offroad. Wiped on OTA update."
 
@@ -381,7 +383,7 @@ if [ "$INJECT_METHOD" = "process_config" ] && [ -f "$PROCESS_CONFIG" ] && grep -
             echo "   -> Running at http://$IP_ADDR:$PORT"
         fi
     fi
-elif [ "$INJECT_METHOD" = "continue_sh" ] && [ -f "$CONTINUE_SH" ] && grep -q "comma-360-viewer" "$CONTINUE_SH" 2>/dev/null; then
+elif [ "$INJECT_METHOD" = "continue_sh" ] && [ -f "$CONTINUE_SH" ] && grep -v '^[[:space:]]*#' "$CONTINUE_SH" 2>/dev/null | grep -q "comma-360-viewer"; then
     echo " Startup method:  continue.sh (AGNOS boot script)"
     echo "                  Survives OTA. Runs at boot with low I/O priority."
 
