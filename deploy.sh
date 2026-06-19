@@ -18,6 +18,11 @@ while [[ $# -gt 0 ]]; do
                           echo "Error: --branch requires a branch name" >&2; exit 1
                       fi
                       shift 2 ;;
+        --port|-p)   PORT="$2"
+                      if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+                          echo "Error: --port requires a valid port number (1-65535)" >&2; exit 1
+                      fi
+                      shift 2 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -89,23 +94,23 @@ fi
 # 4. Create run.sh wrapper for NativeProcess / continue.sh
 echo "[3/5] Creating process manager launcher..."
 
-cat > run.sh << 'RUNEOF'
+cat > run.sh << RUNEOF
 #!/bin/bash
 # Launcher for comma-360-viewer — handles venv activation and port safety.
 # Restart logic lives in server.py (signal-transparent, in-process).
 
+PORT=${PORT}
 # Safety: if port is already in use, another instance is running — exit immediately.
-PORT=8082
-if ss -tlnp 2>/dev/null | grep -q ":$PORT " || netstat -tlnp 2>/dev/null | grep -q ":$PORT "; then
-    echo "$(date): port $PORT already in use, exiting." >> /tmp/comma-360-viewer.log
+if ss -tlnp 2>/dev/null | grep -q ":\$PORT " || netstat -tlnp 2>/dev/null | grep -q ":\$PORT "; then
+    echo "\$(date): port \$PORT already in use, exiting." >> /tmp/comma-360-viewer.log
     exit 0
 fi
 
-cd "$(dirname "$0")"
+cd "\$(dirname "\$0")"
 if [ -d .venv ]; then
     source .venv/bin/activate
 fi
-exec python3 server.py --port "$PORT" >> /tmp/comma-360-viewer.log 2>&1
+exec python3 server.py --port "\$PORT" >> /tmp/comma-360-viewer.log 2>&1
 RUNEOF
 chmod +x run.sh
 echo " -> Created run.sh (with port safety check)"
