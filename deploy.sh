@@ -315,26 +315,26 @@ if $IN_PROCESS_CONFIG || $IN_CONTINUE_SH; then
 else
     echo " -> No existing startup injection detected."
 
-    # Choose injection method
-    if [ -t 0 ]; then
-        # Interactive terminal — offer choice
-        echo ""
-        echo "  Choose startup method:"
-        echo ""
-        echo "    [1] process_config.py (openpilot process manager)"
-        echo "        • Safer: auto-stops when car is driving (ignition-aware)"
-        echo "        • ⚠ Wiped on openpilot OTA update — re-run deploy.sh after updates"
-        echo ""
-        echo "    [2] continue.sh (AGNOS boot script)"
-        echo "        • Survives openpilot OTA updates (no re-deploy needed)"
-        echo "        • Runs even while driving (lower I/O priority mitigates impact)"
-        echo "        • ⚠ If boot fails due to viewer issue, factory reset is the fallback"
-        echo ""
-        read -p "  Choice [1/2] (default: 1): " choice
+    # Choose injection method — try /dev/tty first (works even when
+    # stdin is not a terminal, e.g. ssh host command).
+    echo ""
+    echo "  Choose startup method:"
+    echo ""
+    echo "    [1] process_config.py (openpilot process manager)"
+    echo "        • Safer: auto-stops when car is driving (ignition-aware)"
+    echo "        • ⚠ Wiped on openpilot OTA update — re-run deploy.sh after updates"
+    echo ""
+    echo "    [2] continue.sh (AGNOS boot script)"
+    echo "        • Survives openpilot OTA updates (no re-deploy needed)"
+    echo "        • Runs even while driving (lower I/O priority mitigates impact)"
+    echo "        • ⚠ If boot fails due to viewer issue, factory reset is the fallback"
+    echo ""
+    if read -p "  Choice [1/2] (default: 1): " choice < /dev/tty 2>/dev/null; then
+        :
     else
-        # Non-interactive — default to process_config.py (safer)
-        echo " -> Running non-interactively, defaulting to process_config.py (safer)."
-        echo "    Use --port to customize. Re-run interactively for continue.sh option."
+        echo ""
+        echo " -> No terminal available for input, defaulting to process_config.py (safer)."
+        echo "    Re-run with ssh -t or from an interactive session for the choice prompt."
         choice="1"
     fi
 
