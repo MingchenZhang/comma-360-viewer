@@ -6,6 +6,7 @@ INSTALL_DIR="/data/comma-360-viewer"
 REPO_URL="https://github.com/MingchenZhang/comma-360-viewer.git"
 PORT=8082
 PROCESS_CONFIG="/data/openpilot/system/manager/process_config.py"
+CONTINUE_SH="/data/continue.sh"
 
 BRANCH="main"
 
@@ -16,7 +17,12 @@ while [[ $# -gt 0 ]]; do
                       if [ -z "$BRANCH" ]; then
                           echo "Error: --branch requires a branch name" >&2; exit 1
                       fi
-                      shift 2 ;; 
+                      shift 2 ;;
+        --port|-p)   PORT="$2"
+                      if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+                          echo "Error: --port requires a valid port number (1-65535)" >&2; exit 1
+                      fi
+                      shift 2 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -85,24 +91,32 @@ else
     pip install zstandard pycapnp --quiet || echo " -> Warning: Offline, using existing packages if installed."
 fi
 
-# 4. Create run.sh wrapper for NativeProcess
+# 4. Create run.sh wrapper for NativeProcess / continue.sh
 echo "[3/5] Creating process manager launcher..."
 
-cat > run.sh << 'RUNEOF'
+cat > run.sh << RUNEOF
 #!/bin/bash
-# Launcher for openpilot NativeProcess — handles venv activation.
+# Launcher for comma-360-viewer — handles venv activation and port safety.
 # Restart logic lives in server.py (signal-transparent, in-process).
-cd "$(dirname "$0")"
+
+PORT=${PORT}
+# Safety: if port is already in use, another instance is running — exit immediately.
+if ss -tlnp 2>/dev/null | grep -q ":\$PORT " || netstat -tlnp 2>/dev/null | grep -q ":\$PORT "; then
+    echo "\$(date): port \$PORT already in use, exiting." >> /tmp/comma-360-viewer.log
+    exit 0
+fi
+
+cd "\$(dirname "\$0")"
 if [ -d .venv ]; then
     source .venv/bin/activate
 fi
-exec python3 server.py --port 8082 >> /tmp/comma-360-viewer.log 2>&1
+echo "\$(date): starting server.py on port \$PORT" >> /tmp/comma-360-viewer.log
+exec python3 server.py --port "\$PORT" >> /tmp/comma-360-viewer.log 2>&1
 RUNEOF
 chmod +x run.sh
-echo " -> Created run.sh"
+echo " -> Created run.sh (with port safety check)"
 
-# 5. Inject into process_config.py
-echo "[4/5] Injecting into process manager..."
+# ---- Injection Functions ------------------------------------------------
 
 inject_process_config() {
     if [ ! -f "$PROCESS_CONFIG" ]; then
@@ -223,8 +237,134 @@ PYEOF
     return $?
 }
 
+inject_continue_sh() {
+    if [ ! -f "$CONTINUE_SH" ]; then
+        echo " -> continue.sh not found at $CONTINUE_SH"
+        echo " -> Cannot inject. Is openpilot installed?"
+        return 1
+    fi
+
+    # Check if already injected
+    if grep -q "comma-360-viewer" "$CONTINUE_SH" 2>/dev/null; then
+        echo " -> Already injected in continue.sh, skipping."
+        return 0
+    fi
+
+    # The block to inject — enclosed with comment markers
+    INJECT_BLOCK='# comma-360-viewer (injected by deploy.sh — safe to remove manually)
+if [ -f /data/comma-360-viewer/run.sh ]; then
+    ionice -c 3 bash /data/comma-360-viewer/run.sh &
+fi
+# /comma-360-viewer
+'
+
+    # Insert before the "cd /data/openpilot" line
+    # Use awk to insert: match the line, print our block, then print the line
+    local tmpfile="/tmp/continue_sh_inject.$$"
+    awk -v block="$INJECT_BLOCK" '
+        /^cd \/data\/openpilot/ && !done {
+            print block
+            done = 1
+        }
+        { print }
+    ' "$CONTINUE_SH" > "$tmpfile"
+
+    # Verify the injection landed
+    if ! grep -q "comma-360-viewer" "$tmpfile"; then
+        echo "FATAL: Injection into continue.sh failed — block not found after insert."
+        rm -f "$tmpfile"
+        return 1
+    fi
+
+    # Move into place
+    mv "$tmpfile" "$CONTINUE_SH"
+    chmod +x "$CONTINUE_SH"
+    echo " -> Successfully injected comma-360-viewer into continue.sh"
+    return 0
+}
+
+# ---- End Injection Functions -------------------------------------------
+
+# 5. Detect existing startup injections (ignore commented-out lines)
+echo "[4/5] Checking startup configuration..."
+
+IN_PROCESS_CONFIG=false
+IN_CONTINUE_SH=false
+
+if [ -f "$PROCESS_CONFIG" ] && grep -v '^[[:space:]]*#' "$PROCESS_CONFIG" 2>/dev/null | grep -q "comma_360_viewer"; then
+    IN_PROCESS_CONFIG=true
+fi
+if [ -f "$CONTINUE_SH" ] && grep -v '^[[:space:]]*#' "$CONTINUE_SH" 2>/dev/null | grep -q "comma-360-viewer"; then
+    IN_CONTINUE_SH=true
+fi
+
 INJECT_EXIT=0
-inject_process_config || INJECT_EXIT=$?
+
+if $IN_PROCESS_CONFIG || $IN_CONTINUE_SH; then
+    echo " -> Startup injection already exists:"
+    $IN_PROCESS_CONFIG && echo "    - process_config.py"
+    $IN_CONTINUE_SH && echo "    - continue.sh"
+    echo " -> Skipping injection."
+
+    # Set INJECT_METHOD based on which exists
+    if $IN_PROCESS_CONFIG; then
+        INJECT_METHOD="process_config"
+    else
+        INJECT_METHOD="continue_sh"
+    fi
+else
+    echo " -> No existing startup injection detected."
+
+    # Choose injection method — try /dev/tty first (works even when
+    # stdin is not a terminal, e.g. ssh host command).
+    # Menu goes to /dev/tty so it's visible even if stdout is buffered.
+    {
+        echo ""
+        echo "  Choose startup method:"
+        echo ""
+        echo "    [1] process_config.py (openpilot process manager)"
+        echo "        • Safer: auto-stops when car is driving (ignition-aware)"
+        echo "        • ⚠ If auto-update is enabled, OTA check runs on every offroad"
+        echo "          boot and wipes the injection — auto-start is ineffective."
+        echo ""
+        echo "    [2] continue.sh (AGNOS boot script)"
+        echo "        • Survives openpilot OTA updates (no re-deploy needed)"
+        echo "        • Runs even while driving (lower I/O priority mitigates impact)"
+        echo "        • ⚠ If boot fails, a manual factory reset is required"
+        echo "          (>4 taps on screen during boot, or SSH in and touch"
+        echo "          /data/__system_reset__ then reboot)"
+        echo ""
+    } > /dev/tty 2>/dev/null || true
+    echo -n "  Enter choice [1-2] (1): " > /dev/tty 2>/dev/null || true
+    if read choice < /dev/tty 2>/dev/null; then
+        :
+    else
+        echo "" > /dev/tty 2>/dev/null || true
+        echo " -> No terminal available for input, defaulting to process_config.py (safer)."
+        echo "    Re-run with ssh -t or from an interactive session for the choice prompt."
+        choice="1"
+    fi
+
+    case "$choice" in
+        2)
+            inject_continue_sh
+            INJECT_METHOD="continue_sh"
+            ;;
+        *)
+            if [ "$choice" != "1" ] && [ "$choice" != "" ]; then
+                echo " -> Invalid choice '$choice', defaulting to process_config.py"
+            fi
+            inject_process_config
+            INJECT_METHOD="process_config"
+            echo ""
+            echo "   ⚠  Note: if auto-update is enabled (Settings → Software), openpilot"
+            echo "      checks for updates on every offroad boot. The process_config.py"
+            echo "      injection will be wiped on the NEXT REBOOT, making auto-start"
+            echo "      ineffective. Re-run deploy.sh after each update, or use option [2]"
+            echo "      continue.sh to survive OTAs permanently."
+            ;;
+    esac
+fi
 
 # 6. Status
 echo "[5/5] Done."
@@ -241,8 +381,9 @@ echo " Comma 360 Viewer deployed to:"
 echo "   $INSTALL_DIR"
 echo ""
 
-if [ $INJECT_EXIT -eq 0 ] && [ -f "$PROCESS_CONFIG" ] && grep -q "comma_360_viewer" "$PROCESS_CONFIG" 2>/dev/null; then
-    echo " Process manager:  INJECTED (auto-starts on next reboot)"
+if [ "$INJECT_METHOD" = "process_config" ] && [ -f "$PROCESS_CONFIG" ] && grep -v '^[[:space:]]*#' "$PROCESS_CONFIG" 2>/dev/null | grep -q "comma_360_viewer"; then
+    echo " Startup method:  process_config.py (openpilot process manager)"
+    echo "                  Auto-starts offroad. Wiped on OTA update."
 
     # Also start immediately so no reboot needed
     if [ -f "$INSTALL_DIR/run.sh" ]; then
@@ -255,12 +396,23 @@ if [ $INJECT_EXIT -eq 0 ] && [ -f "$PROCESS_CONFIG" ] && grep -q "comma_360_view
             echo "   -> Running at http://$IP_ADDR:$PORT"
         fi
     fi
-elif [ $INJECT_EXIT -eq 2 ] || [ $INJECT_EXIT -eq 3 ]; then
-    echo " Process manager:  NOT INJECTED (see errors above)"
-    echo "   -> Run the viewer manually:"
-    echo "      $INSTALL_DIR/run.sh"
+elif [ "$INJECT_METHOD" = "continue_sh" ] && [ -f "$CONTINUE_SH" ] && grep -v '^[[:space:]]*#' "$CONTINUE_SH" 2>/dev/null | grep -q "comma-360-viewer"; then
+    echo " Startup method:  continue.sh (AGNOS boot script)"
+    echo "                  Survives OTA. Runs at boot with low I/O priority."
+
+    # Also start immediately
+    if [ -f "$INSTALL_DIR/run.sh" ]; then
+        if ss -tlnp 2>/dev/null | grep -q ":$PORT " || netstat -tlnp 2>/dev/null | grep -q ":$PORT "; then
+            echo "   -> Already running at http://$IP_ADDR:$PORT"
+        else
+            echo " Starting viewer now..."
+            ionice -c 3 bash "$INSTALL_DIR/run.sh" &
+            sleep 1
+            echo "   -> Running at http://$IP_ADDR:$PORT"
+        fi
+    fi
 else
-    echo " Process manager:  not injected (openpilot not detected)"
+    echo " Startup method:  not injected (openpilot not detected or injection failed)"
     echo "   -> Run deploy.sh again after installing openpilot"
     echo "   -> Or start manually: $INSTALL_DIR/run.sh"
 fi
